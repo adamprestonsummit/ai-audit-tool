@@ -283,9 +283,18 @@ def fetch_page(url):
             txt = (tag.string or tag.get_text() or "").strip()
             if txt: r["json_ld"].append(txt[:3000])
 
-        # 2. Full <head> for meta/canonical/OG/Twitter tags
+        # 2. Full <head> — try BeautifulSoup first, fall back to regex on raw HTML
         head = soup.find("head")
-        if head: r["head_html"] = str(head)[:8000]
+        if head and len(str(head)) > 100:
+            r["head_html"] = str(head)[:8000]
+        else:
+            # Regex fallback: extract everything between <head> and </head>
+            head_match = re.search(r"<head[^>]*>(.*?)</head>", resp.text, re.DOTALL | re.IGNORECASE)
+            if head_match:
+                r["head_html"] = head_match.group(0)[:8000]
+            else:
+                # Last resort: grab first 3000 chars of raw HTML which usually has meta tags
+                r["head_html"] = resp.text[:3000]
 
         # 3. Headings
         for lvl in ["h1","h2","h3","h4","h5","h6"]:
@@ -903,7 +912,7 @@ def build_pdf(url, scores, exec_summary, logo_bytes):
             self.set_font("Helvetica","B",15); self.set_text_color(*S_CHARCOAL_RGB)
             self.set_xy(38,10); self.cell(0,7,"AI Visibility Audit",ln=False)
             self.set_font("Helvetica","",8.5); self.set_text_color(130,130,140)
-            self.set_xy(38,18); self.cell(0,5,f"{url}  ·  {datetime.now().strftime('%B %Y')}",ln=True)
+            self.set_xy(38,18); self.cell(0,5,_pdf_safe(f"{url}  -  {datetime.now().strftime('%B %Y')}", 120),ln=True)
             self.set_draw_color(*S_RED_RGB); self.set_line_width(0.9)
             self.line(12,27,198,27); self.ln(3)
         def footer(self):
@@ -998,6 +1007,29 @@ def build_pdf(url, scores, exec_summary, logo_bytes):
     raw = pdf.output()
     return bytes(raw) if not isinstance(raw, bytes) else raw
 
+def _pdf_safe(text, maxlen=200):
+    """Sanitise text for fpdf Latin-1 encoding — replace non-Latin-1 chars."""
+    if not text: return ""
+    text = str(text)
+    # Common unicode replacements
+    replacements = {
+        "’": "'", "‘": "'", "“": '"', "”": '"',
+        "–": "-", "—": "-", "…": "...", "·": "*",
+        "•": "*", "‐": "-", "é": "e", "è": "e",
+        "à": "a", "â": "a", "ô": "o", "û": "u",
+        "ü": "u", "ä": "a", "ö": "o", "ß": "ss",
+        "£": "GBP", "€": "EUR", "®": "(R)", "™": "(TM)",
+        "©": "(C)", "°": "deg", "×": "x", "÷": "/",
+        "→": "->", "←": "<-", "↔": "<->", "»": ">>",
+        "«": "<<", "¼": "1/4", "½": "1/2", "¾": "3/4",
+    }
+    for uc, asc in replacements.items():
+        text = text.replace(uc, asc)
+    # Strip anything remaining outside Latin-1
+    text = text.encode("latin-1", errors="replace").decode("latin-1")
+    return text[:maxlen].strip()
+
+
 def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
     """Full PDF with issues list."""
     logo_tmp="/tmp/summit_logo_pdf.png"
@@ -1026,7 +1058,7 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
             self.set_font("Helvetica","B",15); self.set_text_color(*S_CHARCOAL_RGB)
             self.set_xy(38,10); self.cell(0,7,"AI Visibility Audit",ln=False)
             self.set_font("Helvetica","",8.5); self.set_text_color(130,130,140)
-            self.set_xy(38,18); self.cell(0,5,f"{url}  ·  {datetime.now().strftime('%B %Y')}",ln=True)
+            self.set_xy(38,18); self.cell(0,5,_pdf_safe(f"{url}  -  {datetime.now().strftime('%B %Y')}", 120),ln=True)
             self.set_draw_color(*S_RED_RGB); self.set_line_width(0.9)
             self.line(12,27,198,27); self.ln(3)
         def footer(self):
@@ -1086,7 +1118,7 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
     paras=[p.strip() for p in exec_summary.split("\n\n") if p.strip()][:3]
     pdf.set_font("Helvetica","",8.5); pdf.set_text_color(40,40,50)
     for para in paras:
-        pdf.multi_cell(0,4.8,para); pdf.ln(1.5)
+        pdf.multi_cell(0,4.8,_pdf_safe(para, 800)); pdf.ln(1.5)
     pdf.ln(2)
 
     # Priority actions table
@@ -1122,7 +1154,7 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
         pdf.set_fill_color(*fill); pdf.set_text_color(60,60,70)
         pdf.set_font("Helvetica","",7.5)
         pdf.cell(38,5.5,f"  {dim_short.get(rec['d'],rec['d'][:14])}",fill=True,border=0)
-        rec_txt=rec["rec"][:90]+("…" if len(rec["rec"])>90 else "")
+        rec_txt=_pdf_safe(rec["rec"], 110)
         pdf.cell(135,5.5,f"  {rec_txt}",fill=True,border=0); pdf.ln()
 
     raw=pdf.output()
