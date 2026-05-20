@@ -247,81 +247,173 @@ def weighted_overall(scores):
 # =============================================================================
 # FETCH + ROBOTS
 # =============================================================================
-def fetch_page(url):
-    hdrs = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-GB,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
+# ── shared session with browser-like headers ──────────────────────────────
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection":      "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control":   "no-cache",
+})
+
+
+def _is_blocked(status: int, html: str) -> bool:
+    if status in (403, 429, 503): return True
+    markers = ["just a moment","_cf_chl_","cf-browser-verification",
+               "enable javascript","checking your browser",
+               "host not in allowlist","access denied","403 forbidden"]
+    return any(m in html[:3000].lower() for m in markers)
+
+
+def _is_js_shell(html: str) -> bool:
+    soup = BeautifulSoup(html, "html.parser")
+    for t in soup(["script","style","noscript","svg"]): t.decompose()
+    return len(soup.get_text(" ", strip=True)) < 300 and html.lower().count("<script") > 3
+
+
+def _fetch_wayback(url: str) -> str:
+    """Fetch the latest Wayback Machine snapshot — bypasses most bot protection."""
+    meta = _SESSION.get(
+        f"https://archive.org/wayback/available?url={url}", timeout=10
+    ).json()
+    snap_url = meta.get("archived_snapshots", {}).get("closest", {}).get("url", "")
+    if not snap_url:
+        raise ValueError("No Wayback snapshot found")
+    parts = snap_url.split("/web/", 1)
+    if len(parts) == 2:
+        ts_and_url = parts[1].split("/", 1)
+        if len(ts_and_url) == 2:
+            snap_url = f"https://web.archive.org/web/{ts_and_url[0]}id_/{ts_and_url[1]}"
+    r = _SESSION.get(snap_url, timeout=20, allow_redirects=True)
+    return r.text
+
+
+def _extract_signals(url: str, html: str) -> dict:
+    """
+    Parse raw HTML into structured signals dict.
+    Extracts meta, JSON-LD, headings, ARIA, links, images, Next.js data.
+    JSON-LD and <head> are extracted BEFORE script removal.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    r = {
+        "html": html, "html_raw_length": len(html),
+        "json_ld": [], "head_html": "", "headings": [],
+        "aria_html": "", "images_sample": "", "links_sample": "",
+        "next_data": "", "text": "", "text_length": 0,
+        "text_to_html_ratio": 0,
     }
-    r = {"url":url,"status_code":None,"html":"","text":"","error":None,"load_time":None,
-         "is_https":url.startswith("https://"),"redirect_chain":[],"html_raw_length":0,
-         "text_length":0,"text_to_html_ratio":0,
-         "json_ld":[],"head_html":"","headings":[],"aria_html":"","images_sample":"","links_sample":""}
+
+    # 1. JSON-LD — before any tag removal
+    for tag in soup.find_all("script", type="application/ld+json"):
+        txt = (tag.string or tag.get_text() or "").strip()
+        if txt:
+            r["json_ld"].append(txt[:3000])
+    # Regex fallback in case BeautifulSoup missed any
+    if not r["json_ld"]:
+        raw_ld = re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html, re.DOTALL | re.IGNORECASE)
+        r["json_ld"] = [s.strip()[:3000] for s in raw_ld if s.strip()]
+
+    # 2. <head> — BeautifulSoup first, regex fallback, raw fallback
+    head = soup.find("head")
+    if head and len(str(head)) > 100:
+        r["head_html"] = str(head)[:8000]
+    else:
+        m = re.search(r"<head[^>]*>(.*?)</head>", html, re.DOTALL | re.IGNORECASE)
+        r["head_html"] = m.group(0)[:8000] if m else html[:3000]
+
+    # 3. __NEXT_DATA__ / embedded JS data stores (Wickes, many commerce sites)
+    next_tag = soup.find("script", id="__NEXT_DATA__")
+    if next_tag and next_tag.string:
+        try:
+            nd = json.loads(next_tag.string)
+            def _strings(obj, d=0):
+                if d > 4: return []
+                if isinstance(obj, str) and len(obj) > 20: return [obj[:120]]
+                if isinstance(obj, dict):
+                    v = []
+                    for val in obj.values(): v.extend(_strings(val, d+1))
+                    return v[:10]
+                if isinstance(obj, list):
+                    v = []
+                    for val in obj[:5]: v.extend(_strings(val, d+1))
+                    return v[:10]
+                return []
+            r["next_data"] = "\n".join(_strings(nd)[:20])
+        except Exception:
+            pass
+
+    # 4. Headings
+    for lvl in ["h1","h2","h3","h4","h5","h6"]:
+        for tag in soup.find_all(lvl):
+            r["headings"].append((lvl, tag.get_text(strip=True)[:120]))
+
+    # 5. ARIA
+    aria_tags = soup.find_all(lambda t: any(
+        k.startswith("aria-") or k == "role" for k in (t.attrs or {})))
+    r["aria_html"] = "\n".join(str(t)[:300] for t in aria_tags[:80])
+
+    # 6. Images
+    imgs = soup.find_all("img")
+    r["images_sample"] = "\n".join(
+        f'<img alt="{t.get("alt","[MISSING]")}">' for t in imgs[:80])
+
+    # 7. Links
+    r["links_sample"] = "\n".join(
+        f'<a href="{t.get("href","")[:100]}" rel="{t.get("rel","")}">{t.get_text(strip=True)[:60]}</a>'
+        for t in soup.find_all("a", href=True)[:80])
+
+    # Strip scripts/styles for body text
+    for tag in soup(["script","style","noscript","svg"]): tag.decompose()
+    r["text"]            = soup.get_text(" ", strip=True)[:8000]
+    r["text_length"]     = len(r["text"])
+    r["text_to_html_ratio"] = round(r["text_length"] / max(len(html), 1), 3)
+    return r
+
+
+def fetch_page(url):
+    """
+    Multi-strategy fetch. Falls back to Wayback Machine when direct is blocked.
+    Returns the standard page_data dict used by all Gemini prompts.
+    """
+    r = {
+        "url": url, "status_code": None, "error": None, "load_time": None,
+        "is_https": url.startswith("https://"), "redirect_chain": [],
+        "fetch_source": "direct", "is_js_shell": False,
+        # signal fields populated by _extract_signals
+        "html": "", "html_raw_length": 0, "json_ld": [], "head_html": "",
+        "headings": [], "aria_html": "", "images_sample": "", "links_sample": "",
+        "next_data": "", "text": "", "text_length": 0, "text_to_html_ratio": 0,
+    }
+    html = ""
     try:
-        t0 = time.time()
-        resp = requests.get(url, headers=hdrs, timeout=15, allow_redirects=True)
-        r["load_time"]       = round(time.time()-t0, 2)
-        r["status_code"]     = resp.status_code
-        r["html"]            = resp.text
-        r["final_url"]       = resp.url
-        r["redirect_chain"]  = [x.url for x in resp.history]
-        r["html_raw_length"] = len(resp.text)
-        soup = BeautifulSoup(resp.text, "html.parser")
+        t0   = time.time()
+        resp = _SESSION.get(url, timeout=15, allow_redirects=True)
+        r["load_time"]      = round(time.time()-t0, 2)
+        r["status_code"]    = resp.status_code
+        r["redirect_chain"] = [x.url for x in resp.history]
+        html = resp.text
 
-        # 1. JSON-LD — extract BEFORE removing scripts
-        for tag in soup.find_all("script", type="application/ld+json"):
-            txt = (tag.string or tag.get_text() or "").strip()
-            if txt: r["json_ld"].append(txt[:3000])
+        if _is_blocked(resp.status_code, html):
+            raise ValueError(f"Blocked (HTTP {resp.status_code})")
 
-        # 2. Full <head> — try BeautifulSoup first, fall back to regex on raw HTML
-        head = soup.find("head")
-        if head and len(str(head)) > 100:
-            r["head_html"] = str(head)[:8000]
-        else:
-            # Regex fallback: extract everything between <head> and </head>
-            head_match = re.search(r"<head[^>]*>(.*?)</head>", resp.text, re.DOTALL | re.IGNORECASE)
-            if head_match:
-                r["head_html"] = head_match.group(0)[:8000]
-            else:
-                # Last resort: grab first 3000 chars of raw HTML which usually has meta tags
-                r["head_html"] = resp.text[:3000]
-
-        # 3. Headings
-        for lvl in ["h1","h2","h3","h4","h5","h6"]:
-            for tag in soup.find_all(lvl):
-                r["headings"].append((lvl, tag.get_text(strip=True)[:120]))
-
-        # 4. ARIA attributes
-        aria_tags = soup.find_all(lambda t: any(
-            k.startswith("aria-") or k == "role" for k in (t.attrs or {})))
-        r["aria_html"] = "\n".join(str(t)[:300] for t in aria_tags[:80])
-
-        # 5. Images
-        r["images_sample"] = "\n".join(
-            f'<img alt="{t.get("alt","[MISSING]")}">' for t in soup.find_all("img")[:80])
-
-        # 6. Links
-        r["links_sample"] = "\n".join(
-            f'<a href="{t.get("href","")[:100]}" rel="{t.get("rel","")}">{t.get_text(strip=True)[:60]}</a>'
-            for t in soup.find_all("a", href=True)[:80])
-
-        # Strip scripts/styles for clean body text
-        for tag in soup(["script","style","noscript"]): tag.decompose()
-        r["text"]            = soup.get_text(" ", strip=True)[:8000]
-        r["text_length"]     = len(r["text"])
-        r["text_to_html_ratio"] = round(r["text_length"] / max(r["html_raw_length"],1), 3)
     except Exception as e:
-        r["error"] = str(e)
+        # Wayback Machine fallback
+        try:
+            html = _fetch_wayback(url)
+            r["fetch_source"] = "wayback"
+            r["status_code"]  = 200
+        except Exception as e2:
+            r["error"] = f"Direct: {e} | Wayback: {e2}"
+            return r
+
+    r["is_js_shell"] = _is_js_shell(html)
+    signals = _extract_signals(url, html)
+    r.update(signals)
     return r
 
 def check_robots(url):
@@ -478,9 +570,11 @@ Evaluate:
 "Crawlability & Bot Access": f"""Analyse crawlability and AI bot access for this webpage.
 
 Technical signals:
+- Fetch source: {page_data.get("fetch_source","direct")} {"(WAYBACK: site blocked direct fetch — content is cached version)" if page_data.get("fetch_source")=="wayback" else ""}
+- JS shell detected: {page_data.get("is_js_shell",False)} (True = client-side rendered, very little static content)
 - HTML raw length: {page_data.get("html_raw_length",0)} chars
 - Extracted text length: {page_data.get("text_length",0)} chars
-- Text-to-HTML ratio: {page_data.get("text_to_html_ratio",0):.3f} (below 0.05 suggests JS rendering)
+- Text-to-HTML ratio: {page_data.get("text_to_html_ratio",0):.3f} (below 0.05 strongly suggests JS rendering)
 - HTTP status: {page_data.get("status_code")}
 - HTTPS: {page_data.get("is_https")}
 - Load time: {page_data.get("load_time")}s
@@ -506,6 +600,9 @@ Page headings:
 
 JSON-LD found:
 {json_ld[:1000]}
+
+Embedded JS data (Next.js/__NEXT_DATA__ etc.):
+{page_data.get("next_data","NONE")[:600]}
 
 Evaluate:
 - E-E-A-T signals (expertise, experience, authoritativeness, trustworthiness)
