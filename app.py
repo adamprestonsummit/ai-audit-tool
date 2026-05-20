@@ -1,5 +1,5 @@
 """
-Summit AI Visibility Audit Tool v2
+Summit AI Visibility Audit Tool v2.1
 Powered by Google Gemini 2.5 Flash
 """
 
@@ -15,7 +15,6 @@ import time
 from datetime import datetime
 from urllib.parse import urlparse
 
-# --- Page config must be first Streamlit call ---
 st.set_page_config(
     page_title="Summit AI Visibility Audit",
     page_icon="🔍",
@@ -31,457 +30,382 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from fpdf import FPDF
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 # =============================================================================
-# SUMMIT BRAND PALETTE  (extracted from summit.co.uk + logo)
+# BRAND PALETTE
 # =============================================================================
-# Primary brand colours
-S_RED       = "#D0380B"   # Logo red-orange (dominant)
-S_CHARCOAL  = "#3E405B"   # Site theme-color (dark blue-grey)
+S_RED       = "#D0380B"
+S_SIDEBAR   = "#262626"   # Dark grey sidebar as requested
+S_CHARCOAL  = "#3E405B"   # Used for headings / table headers
 S_WHITE     = "#FFFFFF"
-S_OFFWHITE  = "#F7F7F8"   # Page background tint
-S_LIGHT     = "#EDEDF0"   # Card border / divider
+S_OFFWHITE  = "#F7F7F8"
+S_LIGHT     = "#EDEDF0"
+S_INK       = "#1C1C2E"
+S_MUTED     = "#6B6B80"
+S_CAPTION   = "#9999AA"
 
-# Text colours
-S_INK       = "#1C1C2E"   # Near-black body text
-S_MUTED     = "#6B6B80"   # Muted / secondary text
-S_CAPTION   = "#9999AA"   # Caption
+BG_RED   = "#FDE9E5";  FG_RED   = "#B52D0A"
+BG_AMBER = "#FFF4E0";  FG_AMBER = "#8A4800"
+BG_GREEN = "#E6F5EC";  FG_GREEN = "#1E6E3C"
 
-# Score band colours — backgrounds and foregrounds
-BG_RED      = "#FDE9E5"
-FG_RED      = "#B52D0A"
-BG_AMBER    = "#FFF4E0"
-FG_AMBER    = "#8A4800"
-BG_GREEN    = "#E6F5EC"
-FG_GREEN    = "#1E6E3C"
+S_RED_RGB      = (208, 56, 11)
+S_CHARCOAL_RGB = (62, 64, 91)
+S_SIDEBAR_RGB  = (38, 38, 38)
+FG_RED_RGB     = (181, 45, 10)
+FG_AMBER_RGB   = (138, 72, 0)
+FG_GREEN_RGB   = (30, 110, 60)
+BG_RED_HEX     = "FDE9E5"
+BG_AMBER_HEX   = "FFF4E0"
+BG_GREEN_HEX   = "E6F5EC"
 
-# RGB tuples for docx / fpdf
-S_RED_RGB       = (208, 56, 11)
-S_CHARCOAL_RGB  = (62, 64, 91)
-S_WHITE_RGB     = (255, 255, 255)
-FG_RED_RGB      = (181, 45, 10)
-FG_AMBER_RGB    = (138, 72, 0)
-FG_GREEN_RGB    = (30, 110, 60)
-BG_RED_HEX      = "FDE9E5"
-BG_AMBER_HEX    = "FFF4E0"
-BG_GREEN_HEX    = "E6F5EC"
-
-# Dimension configuration — weighted by AI impact
 DIMENSION_CONFIG = {
-    "Crawlability & Bot Access":    {"weight": 0.20, "icon": "🤖", "color": S_CHARCOAL,  "description": "Can AI crawlers access and parse the page content?"},
-    "Structured Data / Schema":     {"weight": 0.18, "icon": "🏷️",  "color": "#7C3AED",  "description": "Schema.org JSON-LD implementation quality and completeness"},
-    "LLM Content Signals":          {"weight": 0.15, "icon": "🧠",  "color": S_RED,      "description": "Content clarity, factual density and E-E-A-T signals"},
-    "Meta & SEO Signals":           {"weight": 0.12, "icon": "🔍",  "color": "#0E7C4A",  "description": "Title tags, meta descriptions, canonical tags and Open Graph"},
-    "Heading Structure":            {"weight": 0.10, "icon": "📋",  "color": "#0369A1",  "description": "Semantic H1–H6 hierarchy and logical content flow"},
-    "ARIA Implementation":          {"weight": 0.10, "icon": "♿",  "color": "#BE185D",  "description": "Accessibility attributes that also aid AI content parsing"},
-    "Link Quality":                 {"weight": 0.08, "icon": "🔗",  "color": "#78350F",  "description": "Internal/external link quality, anchor text and nofollow usage"},
-    "Image Alt Text":               {"weight": 0.07, "icon": "🖼️",  "color": "#374151",  "description": "Alt text coverage, quality and keyword relevance"},
-    "AI Search Health":             {"weight": 0.05, "icon": "📡",  "color": "#B45309",  "description": "llms.txt, AI bot directives in robots.txt"},
-    "Duplicate Content & Tags":     {"weight": 0.05, "icon": "📄",  "color": "#6B6B80",  "description": "Duplicate titles, canonical consistency, thin content"},
+    "Crawlability & Bot Access":  {"weight":0.20,"icon":"🤖","color":S_CHARCOAL, "description":"Can AI crawlers access and parse the page?"},
+    "Structured Data / Schema":   {"weight":0.18,"icon":"🏷️", "color":"#7C3AED","description":"Schema.org JSON-LD quality and completeness"},
+    "LLM Content Signals":        {"weight":0.15,"icon":"🧠","color":S_RED,     "description":"Content clarity, factual density, E-E-A-T signals"},
+    "Meta & SEO Signals":         {"weight":0.12,"icon":"🔍","color":"#0E7C4A","description":"Title, meta description, canonical, Open Graph"},
+    "Heading Structure":          {"weight":0.10,"icon":"📋","color":"#0369A1","description":"Semantic H1–H6 hierarchy and content flow"},
+    "ARIA Implementation":        {"weight":0.10,"icon":"♿","color":"#BE185D","description":"Accessibility attributes aiding AI content parsing"},
+    "Link Quality":               {"weight":0.08,"icon":"🔗","color":"#78350F","description":"Anchor text quality, internal/external link health"},
+    "Image Alt Text":             {"weight":0.07,"icon":"🖼️", "color":"#374151","description":"Alt text coverage, quality and keyword relevance"},
+    "AI Search Health":           {"weight":0.05,"icon":"📡","color":"#B45309","description":"llms.txt presence, AI bot directives in robots.txt"},
+    "Duplicate Content & Tags":   {"weight":0.05,"icon":"📄","color":"#6B6B80","description":"Canonical consistency, duplicate titles, thin content"},
 }
 
-
-# =============================================================================
-# LOGO HELPERS
-# =============================================================================
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "summit_logo.png")
 
 def load_logo_bytes() -> bytes:
-    """Load the Summit logo PNG from disk."""
     with open(LOGO_PATH, "rb") as f:
         return f.read()
 
-def logo_b64(logo_bytes: bytes) -> str:
-    return base64.b64encode(logo_bytes).decode()
-
+def logo_b64(b: bytes) -> str:
+    return base64.b64encode(b).decode()
 
 # =============================================================================
-# CSS
+# CSS  — fixes white-on-white with explicit dark text colours everywhere
 # =============================================================================
 def inject_css():
     st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    html, body, [class*="css"] {{ font-family:'Inter',sans-serif; }}
+    .main {{ background:{S_OFFWHITE}; }}
 
-    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
-    .main {{ background: {S_OFFWHITE}; }}
-
-    /* ---- Sidebar ---- */
-    [data-testid="stSidebar"] {{ background: {S_CHARCOAL} !important; }}
+    /* ── Sidebar ── dark grey #262626 */
+    [data-testid="stSidebar"] {{ background:{S_SIDEBAR} !important; }}
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span,
     [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] div,
-    [data-testid="stSidebar"] small {{ color: rgba(255,255,255,0.90) !important; }}
+    [data-testid="stSidebar"] div {{ color:rgba(255,255,255,0.88) !important; }}
     [data-testid="stSidebar"] h1,
     [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3 {{ color: #FFFFFF !important; }}
-    [data-testid="stSidebar"] .stTextInput input {{
-        background: rgba(255,255,255,0.10) !important;
-        color: #FFFFFF !important;
-        border: 1px solid rgba(255,255,255,0.25) !important;
-        border-radius: 6px;
+    [data-testid="stSidebar"] h3 {{ color:#FFFFFF !important; }}
+    /* Text inputs */
+    [data-testid="stSidebar"] .stTextInput input,
+    [data-testid="stSidebar"] .stTextArea textarea {{
+        background:rgba(255,255,255,0.08) !important;
+        color:#FFFFFF !important;
+        border:1px solid rgba(255,255,255,0.22) !important;
+        border-radius:6px;
     }}
-    [data-testid="stSidebar"] .stTextInput input::placeholder {{ color: rgba(255,255,255,0.45) !important; }}
+    [data-testid="stSidebar"] .stTextInput input::placeholder,
+    [data-testid="stSidebar"] .stTextArea textarea::placeholder {{
+        color:rgba(255,255,255,0.38) !important;
+    }}
+    /* URL tab buttons inside sidebar */
+    [data-testid="stSidebar"] .stTabs [data-baseweb="tab"] {{
+        color:rgba(255,255,255,0.70) !important;
+        background:transparent !important;
+    }}
+    [data-testid="stSidebar"] .stTabs [aria-selected="true"] {{
+        color:#FFFFFF !important;
+        border-bottom:2px solid {S_RED} !important;
+    }}
+    [data-testid="stSidebar"] .stTabs [data-baseweb="tab-list"] {{
+        background:transparent !important;
+        border-bottom:1px solid rgba(255,255,255,0.12) !important;
+    }}
+    /* Run button */
     [data-testid="stSidebar"] .stButton > button {{
-        background: {S_RED} !important;
-        color: #FFFFFF !important;
-        font-weight: 700 !important;
-        border: none !important;
-        border-radius: 6px !important;
-        width: 100%;
-        padding: 0.65rem 1rem;
-        font-size: 0.95rem;
-        letter-spacing: 0.02em;
+        background:{S_RED} !important;
+        color:#FFFFFF !important;
+        font-weight:700 !important;
+        border:none !important;
+        border-radius:6px !important;
+        width:100%;
+        padding:0.65rem 1rem;
+        font-size:0.95rem;
+        letter-spacing:0.02em;
+        transition:background 0.15s;
     }}
-    [data-testid="stSidebar"] .stButton > button:hover {{ background: #B52D0A !important; }}
-    [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.15) !important; }}
+    [data-testid="stSidebar"] .stButton > button:hover {{ background:#B52D0A !important; }}
+    [data-testid="stSidebar"] hr {{ border-color:rgba(255,255,255,0.12) !important; }}
+    /* Success message in sidebar */
+    [data-testid="stSidebar"] .stAlert {{ background:rgba(30,110,60,0.25) !important; border:none !important; }}
 
-    /* ---- Metric cards ---- */
-    .metric-card {{
-        background: {S_WHITE};
-        border-radius: 12px;
-        padding: 18px 22px;
-        box-shadow: 0 1px 6px rgba(0,0,0,0.08);
-        margin-bottom: 14px;
-        border-top: 4px solid {S_RED};
-    }}
-    .metric-card.red   {{ border-top-color: {FG_RED}; background: {BG_RED}; }}
-    .metric-card.amber {{ border-top-color: {FG_AMBER}; background: {BG_AMBER}; }}
-    .metric-card.green {{ border-top-color: {FG_GREEN}; background: {BG_GREEN}; }}
-    .metric-number {{ font-size: 2.6rem; font-weight: 800; line-height: 1.05; color: {S_INK}; }}
-    .metric-label  {{ font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
-                      letter-spacing: 0.06em; color: {S_MUTED}; margin-top: 4px; }}
-
-    /* ---- Score hero ---- */
+    /* ── Score hero ── */
     .score-hero {{
-        background: linear-gradient(135deg, {S_CHARCOAL} 0%, #52547A 100%);
-        border-radius: 14px;
-        padding: 28px 32px;
-        color: {S_WHITE};
-        text-align: center;
-        box-shadow: 0 4px 18px rgba(62,64,91,0.35);
+        background:linear-gradient(135deg,{S_CHARCOAL} 0%,#52547A 100%);
+        border-radius:14px; padding:26px 28px; color:{S_WHITE};
+        text-align:center; box-shadow:0 4px 18px rgba(62,64,91,0.3);
     }}
-    .score-hero .number {{ font-size: 4.8rem; font-weight: 800; line-height: 1; color: {S_WHITE}; }}
-    .score-hero .denom  {{ font-size: 1.5rem; color: rgba(255,255,255,0.55); }}
-    .score-hero .lbl    {{ font-size: 0.78rem; font-weight: 600; text-transform: uppercase;
-                           letter-spacing: 0.08em; color: rgba(255,255,255,0.65); margin-bottom: 8px; }}
+    .score-hero .num   {{ font-size:4.4rem; font-weight:800; line-height:1; color:#FFFFFF; }}
+    .score-hero .denom {{ font-size:1.4rem; color:rgba(255,255,255,0.50); }}
+    .score-hero .lbl   {{ font-size:0.74rem; font-weight:600; text-transform:uppercase;
+                          letter-spacing:0.09em; color:rgba(255,255,255,0.60); margin-bottom:6px; }}
 
-    /* ---- Issues list ---- */
-    .issue-row {{
-        background: {S_WHITE};
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin-bottom: 8px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-        border-left: 4px solid {S_RED};
-        display: flex; align-items: flex-start; gap: 12px;
+    /* ── Metric cards ── explicit foreground colours, never white-on-white */
+    .mcard {{
+        background:{S_WHITE}; border-radius:12px; padding:16px 20px;
+        box-shadow:0 1px 6px rgba(0,0,0,0.07); margin-bottom:12px;
+        border-top:4px solid {S_RED};
     }}
-    .issue-row.critical {{ border-left-color: {FG_RED}; }}
-    .issue-row.warning  {{ border-left-color: {FG_AMBER}; }}
-    .issue-row.info     {{ border-left-color: #1D5FA6; }}
+    .mcard.red   {{ border-top-color:{FG_RED};   background:{BG_RED};   }}
+    .mcard.amber {{ border-top-color:{FG_AMBER}; background:{BG_AMBER}; }}
+    .mcard.green {{ border-top-color:{FG_GREEN}; background:{BG_GREEN}; }}
+    .mcard.grey  {{ border-top-color:{S_CHARCOAL}; background:{S_WHITE}; }}
+    .mnum  {{ font-size:2.5rem; font-weight:800; line-height:1.1; }}
+    .mcard.red   .mnum {{ color:{FG_RED}; }}
+    .mcard.amber .mnum {{ color:{FG_AMBER}; }}
+    .mcard.green .mnum {{ color:{FG_GREEN}; }}
+    .mcard.grey  .mnum {{ color:{S_CHARCOAL}; }}
+    .mlbl  {{ font-size:0.72rem; font-weight:600; text-transform:uppercase;
+              letter-spacing:0.07em; color:{S_MUTED}; margin-top:3px; }}
 
-    /* ---- Badges ---- */
-    .badge-red   {{ background: {BG_RED};   color: {FG_RED};   padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 0.8rem; white-space: nowrap; }}
-    .badge-amber {{ background: {BG_AMBER}; color: {FG_AMBER}; padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 0.8rem; white-space: nowrap; }}
-    .badge-green {{ background: {BG_GREEN}; color: {FG_GREEN}; padding: 3px 10px; border-radius: 12px; font-weight: 600; font-size: 0.8rem; white-space: nowrap; }}
+    /* ── Badges — explicit fg/bg, no white-on-white ── */
+    .badge-red   {{ background:{BG_RED};   color:{FG_RED};   padding:3px 10px; border-radius:12px; font-weight:600; font-size:0.79rem; white-space:nowrap; display:inline-block; }}
+    .badge-amber {{ background:{BG_AMBER}; color:{FG_AMBER}; padding:3px 10px; border-radius:12px; font-weight:600; font-size:0.79rem; white-space:nowrap; display:inline-block; }}
+    .badge-green {{ background:{BG_GREEN}; color:{FG_GREEN}; padding:3px 10px; border-radius:12px; font-weight:600; font-size:0.79rem; white-space:nowrap; display:inline-block; }}
 
-    /* ---- Table ---- */
-    .audit-table {{ width:100%; border-collapse:collapse; background:{S_WHITE};
-                    border-radius:10px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.07); }}
-    .audit-table th {{ background:{S_CHARCOAL}; color:{S_WHITE}; padding:11px 14px;
-                       text-align:left; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.05em; }}
-    .audit-table td {{ padding:10px 14px; border-bottom:1px solid {S_LIGHT}; font-size:0.86rem; color:{S_INK}; }}
-    .audit-table tr:last-child td {{ border-bottom:none; }}
-    .audit-table tr:hover td {{ background:{S_OFFWHITE}; }}
+    /* ── Issues list ── */
+    .irow {{ background:{S_WHITE}; border-radius:8px; padding:11px 15px;
+              margin-bottom:7px; box-shadow:0 1px 3px rgba(0,0,0,0.05);
+              border-left:4px solid {S_RED}; display:flex; gap:10px; align-items:flex-start; }}
+    .irow.critical {{ border-left-color:{FG_RED}; }}
+    .irow.warning  {{ border-left-color:{FG_AMBER}; }}
+    .irow.info     {{ border-left-color:#1D5FA6; }}
+    .irow .ititle  {{ font-weight:600; font-size:0.86rem; color:{S_INK}; }}
+    .irow .irec    {{ font-size:0.81rem; color:{S_MUTED}; margin-top:2px; }}
+    .idim {{ background:{S_LIGHT}; color:{S_MUTED}; padding:1px 7px;
+             border-radius:9px; font-size:0.73rem; display:inline-block; margin-left:6px; }}
 
-    /* ---- Misc ---- */
-    #MainMenu {{ visibility: hidden; }}
-    footer {{ visibility: hidden; }}
-    .stDeployButton {{ display: none; }}
+    /* ── Table ── */
+    .at {{ width:100%; border-collapse:collapse; background:{S_WHITE};
+           border-radius:10px; overflow:hidden; box-shadow:0 2px 7px rgba(0,0,0,0.06); }}
+    .at th {{ background:{S_CHARCOAL}; color:#FFFFFF; padding:10px 13px;
+              text-align:left; font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; }}
+    .at td {{ padding:9px 13px; border-bottom:1px solid {S_LIGHT}; font-size:0.84rem; color:{S_INK}; }}
+    .at tr:last-child td {{ border-bottom:none; }}
+    .at tr:hover td {{ background:{S_OFFWHITE}; }}
+
+    /* ── Comparison tab ── */
+    .comp-url {{ font-size:0.78rem; color:{S_MUTED}; font-weight:500; }}
+
+    /* ── Misc ── */
+    #MainMenu {{ visibility:hidden; }} footer {{ visibility:hidden; }}
+    .stDeployButton {{ display:none; }}
     </style>
     """, unsafe_allow_html=True)
 
 
 # =============================================================================
-# SCORING HELPERS
+# SCORING
 # =============================================================================
-def score_band(score: float) -> str:
-    if score <= 2:   return "red"
-    if score <= 5:   return "amber"
-    return "green"
+def score_band(s):
+    return "red" if s <= 2 else ("amber" if s <= 5 else "green")
 
-def score_fg(score: float) -> str:
-    return {" red": FG_RED, "red": FG_RED, "amber": FG_AMBER, "green": FG_GREEN}[score_band(score)]
+def score_fg_hex(s):
+    return {" red":FG_RED,"red":FG_RED,"amber":FG_AMBER,"green":FG_GREEN}[score_band(s)]
 
-def score_bg(score: float) -> str:
-    return {"red": BG_RED, "amber": BG_AMBER, "green": BG_GREEN}[score_band(score)]
+def score_fg_rgb(s):
+    return {"red":FG_RED_RGB,"amber":FG_AMBER_RGB,"green":FG_GREEN_RGB}[score_band(s)]
 
-def score_fg_hex(score: float) -> str:
-    return {"red": FG_RED, "amber": FG_AMBER, "green": FG_GREEN}[score_band(score)]
+def score_bg_hex(s):
+    return {"red":BG_RED_HEX,"amber":BG_AMBER_HEX,"green":BG_GREEN_HEX}[score_band(s)]
 
-def score_fg_rgb(score: float) -> tuple:
-    return {"red": FG_RED_RGB, "amber": FG_AMBER_RGB, "green": FG_GREEN_RGB}[score_band(score)]
-
-def score_bg_hex(score: float) -> str:
-    return {"red": BG_RED_HEX, "amber": BG_AMBER_HEX, "green": BG_GREEN_HEX}[score_band(score)]
-
-def weighted_overall(scores: dict) -> float:
-    total_w, total_ws = 0, 0
-    for dim, score in scores.items():
-        w = DIMENSION_CONFIG.get(dim, {}).get("weight", 0.05)
-        total_ws += score * w
-        total_w  += w
-    return round(total_ws / total_w, 1) if total_w else 0.0
+def weighted_overall(scores):
+    tw, tws = 0, 0
+    for d, s in scores.items():
+        w = DIMENSION_CONFIG.get(d, {}).get("weight", 0.05)
+        tws += s * w; tw += w
+    return round(tws / tw, 1) if tw else 0.0
 
 
 # =============================================================================
-# PAGE FETCHER
+# FETCH + ROBOTS
 # =============================================================================
-def fetch_page(url: str) -> dict:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; SummitAuditBot/2.0; +https://summit.co.uk)",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-GB,en;q=0.9",
-    }
-    result = {
-        "url": url, "status_code": None, "html": "", "text": "",
-        "error": None, "load_time": None, "is_https": url.startswith("https://"),
-        "redirect_chain": [], "html_raw_length": 0, "text_length": 0,
-        "text_to_html_ratio": 0,
-    }
+def fetch_page(url):
+    hdrs = {"User-Agent":"Mozilla/5.0 (compatible; SummitAuditBot/2.0; +https://summit.co.uk)",
+            "Accept":"text/html,application/xhtml+xml","Accept-Language":"en-GB,en;q=0.9"}
+    r = {"url":url,"status_code":None,"html":"","text":"","error":None,"load_time":None,
+         "is_https":url.startswith("https://"),"redirect_chain":[],"html_raw_length":0,
+         "text_length":0,"text_to_html_ratio":0}
     try:
         t0 = time.time()
-        r = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-        result["load_time"]     = round(time.time() - t0, 2)
-        result["status_code"]   = r.status_code
-        result["html"]          = r.text
-        result["final_url"]     = r.url
-        result["redirect_chain"]= [resp.url for resp in r.history]
-        result["response_headers"] = dict(r.headers)
-        soup = BeautifulSoup(r.text, "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
-        result["text"]              = soup.get_text(" ", strip=True)[:8000]
-        result["html_raw_length"]   = len(r.text)
-        result["text_length"]       = len(result["text"])
-        result["text_to_html_ratio"]= round(result["text_length"] / max(len(r.text), 1), 3)
+        resp = requests.get(url, headers=hdrs, timeout=15, allow_redirects=True)
+        r["load_time"]       = round(time.time()-t0, 2)
+        r["status_code"]     = resp.status_code
+        r["html"]            = resp.text
+        r["final_url"]       = resp.url
+        r["redirect_chain"]  = [x.url for x in resp.history]
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script","style","noscript"]): tag.decompose()
+        r["text"]            = soup.get_text(" ", strip=True)[:8000]
+        r["html_raw_length"] = len(resp.text)
+        r["text_length"]     = len(r["text"])
+        r["text_to_html_ratio"] = round(r["text_length"] / max(len(resp.text),1), 3)
     except Exception as e:
-        result["error"] = str(e)
-    return result
+        r["error"] = str(e)
+    return r
 
-
-def check_robots(url: str) -> dict:
-    parsed  = urlparse(url)
-    rob_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-    ai_bots = ["GPTBot","ChatGPT-User","OAI-SearchBot","Google-Extended",
-               "Googlebot","PerplexityBot","ClaudeBot","anthropic-ai",
-               "Amazonbot","YouBot","CCBot"]
-    result  = {"robots_url": rob_url, "found": False, "raw": "", "ai_bots": {}}
+def check_robots(url):
+    parsed = urlparse(url)
+    rob = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    bots = ["GPTBot","ChatGPT-User","OAI-SearchBot","Google-Extended",
+            "Googlebot","PerplexityBot","ClaudeBot","anthropic-ai","Amazonbot","YouBot","CCBot"]
+    res = {"robots_url":rob,"found":False,"raw":"","ai_bots":{}}
     try:
-        r = requests.get(rob_url, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
-        if r.status_code == 200:
-            result["found"] = True
-            result["raw"]   = r.text[:3000]
-            text = r.text.lower()
-            for bot in ai_bots:
-                pat   = rf"user-agent:\s*{re.escape(bot.lower())}(.*?)(?=user-agent:|$)"
-                match = re.search(pat, text, re.DOTALL | re.IGNORECASE)
+        rr = requests.get(rob, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
+        if rr.status_code == 200:
+            res["found"] = True; res["raw"] = rr.text[:3000]; txt = rr.text.lower()
+            for b in bots:
+                m = re.search(rf"user-agent:\s*{re.escape(b.lower())}(.*?)(?=user-agent:|$)", txt, re.DOTALL|re.IGNORECASE)
                 blocked = False
-                if match:
-                    block = match.group(1)
-                    if re.search(r"disallow:\s*/\s*$", block, re.MULTILINE):
-                        blocked = True
-                    elif re.search(r"disallow:\s*$", block, re.MULTILINE):
-                        blocked = False
-                result["ai_bots"][bot] = "BLOCKED" if blocked else "ALLOWED"
+                if m:
+                    blk = m.group(1)
+                    if re.search(r"disallow:\s*/\s*$", blk, re.MULTILINE): blocked=True
+                    elif re.search(r"disallow:\s*$", blk, re.MULTILINE):   blocked=False
+                res["ai_bots"][b] = "BLOCKED" if blocked else "ALLOWED"
     except Exception as e:
-        result["error"] = str(e)
-    return result
+        res["error"] = str(e)
+    return res
 
-
-def check_llms_txt(url: str) -> dict:
-    parsed   = urlparse(url)
-    llms_url = f"{parsed.scheme}://{parsed.netloc}/llms.txt"
-    result   = {"found": False, "url": llms_url, "content": ""}
+def check_llms_txt(url):
+    parsed = urlparse(url)
+    lu = f"{parsed.scheme}://{parsed.netloc}/llms.txt"
+    res = {"found":False,"url":lu,"content":""}
     try:
-        r = requests.get(llms_url, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
-        if r.status_code == 200 and len(r.text) > 10:
-            result["found"]   = True
-            result["content"] = r.text[:1000]
-    except Exception:
-        pass
-    return result
+        rr = requests.get(lu, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
+        if rr.status_code == 200 and len(rr.text) > 10:
+            res["found"] = True; res["content"] = rr.text[:1000]
+    except: pass
+    return res
 
 
 # =============================================================================
-# GEMINI ANALYSIS
+# GEMINI
 # =============================================================================
-def analyse_dimension(client, page_data: dict, dimension: str) -> dict:
-    html_snip = page_data.get("html", "")[:6000]
-    txt_snip  = page_data.get("text", "")[:3000]
+PROMPTS = {
+"ARIA Implementation": """Analyse ARIA implementation on this webpage for AI visibility.
+HTML: {html}
+Evaluate: roles/labels/landmarks, form labels, aria-live regions, structural clarity for AI.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"<2 sentences>","findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-    prompts = {
-        "ARIA Implementation": f"""Analyse the ARIA implementation on this webpage for AI visibility.
+"Structured Data / Schema": """Analyse schema.org structured data on this webpage.
+HTML: {html}
+Evaluate: JSON-LD types, completeness, missing types (Product, BreadcrumbList, FAQPage, Organization, etc), required fields.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","schemas_found":[],"schemas_missing":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-HTML (first 6000 chars):
-{html_snip}
+"Heading Structure": """Analyse heading structure H1-H6 on this webpage.
+HTML: {html}
+Text: {text}
+Evaluate: H1 count, hierarchy logic, skipped levels, descriptiveness, structure clarity for AI.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","h1_count":<int>,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-Evaluate: ARIA roles/labels/landmarks, form label associations, aria-live regions, structural clarity for AI parsers.
+"Meta & SEO Signals": """Analyse meta tags and SEO signals.
+HTML: {html}
+Evaluate: title (presence, 50-60 chars), meta description (150-160 chars), canonical, Open Graph, Twitter card, robots meta.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","title_length":<int>,"meta_desc_present":true,"canonical_present":true,"og_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
+"Link Quality": """Analyse link quality for AI visibility.
+HTML: {html}
+Evaluate: descriptive vs generic anchor text, external link authority, nofollow, image-only links.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-        "Structured Data / Schema": f"""Analyse the schema.org structured data on this webpage.
+"Image Alt Text": """Analyse image alt text quality.
+HTML: {html}
+Evaluate: coverage %, quality, decorative images with empty alt, complex images needing descriptions.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","images_found":<int>,"images_with_alt":<int>,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-HTML:
-{html_snip}
+"Crawlability & Bot Access": """Analyse crawlability and bot access.
+HTML length:{html_len} Text length:{text_len} Text-HTML ratio:{ratio:.3f}
+Status:{status} HTTPS:{https} Load:{load}s Redirects:{redirects}
+Robots: {robots}
+HTML snippet:{html_snip}
+Evaluate: SSR vs CSR (ratio<0.05 = JS-heavy), bot blocking, HTTPS, redirects, load time, AI bot access.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","rendering_type":"SSR|CSR|Mixed","js_dependent":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-Evaluate: JSON-LD types present, completeness, missing recommended types (Product, BreadcrumbList, FAQPage, Organization, etc.), required field population.
+"LLM Content Signals": """Analyse content quality and LLM/AI visibility signals.
+Text: {text}
+HTML snippet: {html_snip}
+Evaluate: E-E-A-T signals, content depth, factual density, LLM extractability, trust signals, entity clarity, FAQ-style content.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","eeat_signals":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "schemas_found": ["<str>"], "schemas_missing": ["<str>"], "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
+"AI Search Health": """Analyse AI search health signals.
+llms_txt_found:{llms_found} llms_content:{llms_content}
+Robots AI bots: {robots_bots}
+HTML: {html_snip}
+Evaluate: llms.txt presence/quality, AI crawler access (GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot etc), AI-specific meta tags.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","llms_txt_present":false,"ai_bots_blocked":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
 
-        "Heading Structure": f"""Analyse the heading structure (H1-H6) on this webpage.
+"Duplicate Content & Tags": """Analyse duplicate content and canonical issues.
+HTML: {html}
+Ratio: {ratio:.3f}
+Evaluate: canonical tag presence, default CMS title risk, boilerplate/thin content, duplicate meta description risk.
+Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","canonical_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
+}
 
-HTML:
-{html_snip}
-Text:
-{txt_snip}
-
-Evaluate: H1 count, hierarchy logic, skipped levels, heading descriptiveness, content structure clarity for AI.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "h1_count": <int>, "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "Meta & SEO Signals": f"""Analyse meta tags and SEO signals on this webpage.
-
-HTML:
-{html_snip}
-
-Evaluate: title tag (presence, length 50-60 chars), meta description (presence, length 150-160 chars), canonical tag, Open Graph tags, Twitter card, robots meta tag.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "title_length": <int>, "meta_desc_present": true/false, "canonical_present": true/false, "og_present": true/false, "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "Link Quality": f"""Analyse link quality on this webpage for AI visibility.
-
-HTML:
-{html_snip}
-
-Evaluate: descriptive vs generic anchor text ("click here" etc.), external link authority, nofollow usage, image links with no text, anchor text helping AI content graph.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "Image Alt Text": f"""Analyse image alt text quality on this webpage.
-
-HTML:
-{html_snip}
-
-Evaluate: percentage of images with alt text, alt text quality (descriptive, not stuffed), decorative images with empty alt="", complex images needing longer descriptions.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "images_found": <int>, "images_with_alt": <int>, "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "Crawlability & Bot Access": f"""Analyse crawlability and bot access for this webpage.
-
-HTML length: {page_data.get('html_raw_length', 0)} chars
-Text extracted: {page_data.get('text_length', 0)} chars
-Text-to-HTML ratio: {page_data.get('text_to_html_ratio', 0):.3f}
-Status code: {page_data.get('status_code')}
-HTTPS: {page_data.get('is_https')}
-Load time: {page_data.get('load_time')}s
-Redirects: {page_data.get('redirect_chain', [])}
-Robots.txt data: {json.dumps(page_data.get('robots_data', {}))}
-HTML snippet: {html_snip[:2000]}
-
-Evaluate: SSR vs CSR rendering (low text-to-HTML ratio < 0.05 suggests JS dependency), bot blocking, HTTPS, redirect chains, load time, AI bot access in robots.txt.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "rendering_type": "SSR|CSR|Mixed", "js_dependent": true/false, "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "LLM Content Signals": f"""Analyse content quality and LLM/AI visibility signals on this webpage.
-
-Text:
-{txt_snip}
-HTML snippet:
-{html_snip[:2000]}
-
-Evaluate: E-E-A-T signals (expertise, experience, authoritativeness, trustworthiness), content depth and factual density, clarity for LLM extraction, trust signals (author names, dates, credentials), brand/entity clarity, FAQ-style extractable content.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "eeat_signals": ["<str>"], "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "AI Search Health": f"""Analyse AI search health signals for this webpage.
-
-llms.txt found: {page_data.get('llms_txt', {}).get('found', False)}
-llms.txt content: {page_data.get('llms_txt', {}).get('content', 'N/A')}
-Robots.txt AI bots: {json.dumps(page_data.get('robots_data', {}).get('ai_bots', {}))}
-HTML: {html_snip[:2000]}
-
-Evaluate: llms.txt presence and quality, AI crawler access (GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot etc.) in robots.txt, any AI-specific meta tags or directives.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "llms_txt_present": true/false, "ai_bots_blocked": ["<str>"], "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}""",
-
-        "Duplicate Content & Tags": f"""Analyse duplicate content and tag issues on this webpage.
-
-HTML:
-{html_snip}
-Text-to-HTML ratio: {page_data.get('text_to_html_ratio', 0):.3f}
-
-Evaluate: canonical tag presence, duplicate/default CMS title risk, boilerplate content proportion, thin content signals, duplicate meta description risk.
-
-Return ONLY a JSON object — no markdown fences:
-{{"score": <1-10>, "summary": "<2 sentences>", "canonical_present": true/false, "findings": ["<str>"], "issues": [{{"severity": "critical|warning|info", "issue": "<str>", "recommendation": "<str>"}}], "positive": ["<str>"]}}"""
-    }
-
-    prompt = prompts.get(dimension,
-        f'Analyse {dimension}. Return ONLY JSON: {{"score": 5, "summary": "", "findings": [], "issues": [], "positive": []}}')
-
+def analyse_dimension(client, page_data, dimension):
+    tpl = PROMPTS.get(dimension, 'Analyse {dimension}. Return ONLY JSON: {{"score":5,"summary":"","findings":[],"issues":[],"positive":[]}}')
+    html = page_data.get("html","")[:6000]
+    text = page_data.get("text","")[:3000]
+    robots = page_data.get("robots_data",{})
+    llms   = page_data.get("llms_txt",{})
+    prompt = tpl.format(
+        html=html, text=text, html_snip=html[:2000],
+        html_len=page_data.get("html_raw_length",0),
+        text_len=page_data.get("text_length",0),
+        ratio=page_data.get("text_to_html_ratio",0),
+        status=page_data.get("status_code",""),
+        https=page_data.get("is_https",""),
+        load=page_data.get("load_time",""),
+        redirects=page_data.get("redirect_chain",[]),
+        robots=json.dumps(robots),
+        llms_found=llms.get("found",False),
+        llms_content=llms.get("content","N/A"),
+        robots_bots=json.dumps(robots.get("ai_bots",{})),
+        dimension=dimension,
+    )
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         raw  = resp.text.strip()
-        raw  = re.sub(r"^```(?:json)?\n?", "", raw)
-        raw  = re.sub(r"\n?```$", "", raw)
+        raw  = re.sub(r"^```(?:json)?\n?","",raw); raw = re.sub(r"\n?```$","",raw)
         return json.loads(raw)
     except json.JSONDecodeError:
         m = re.search(r'\{.*\}', raw if 'raw' in dir() else '{}', re.DOTALL)
         if m:
             try: return json.loads(m.group(0))
-            except Exception: pass
-    except Exception:
-        pass
-    return {"score": 0, "summary": "Analysis could not be completed.", "findings": [], "issues": [], "positive": []}
+            except: pass
+    except: pass
+    return {"score":0,"summary":"Analysis could not be completed.","findings":[],"issues":[],"positive":[]}
 
+def gen_exec_summary(client, url, scores, all_results):
+    overall = weighted_overall(scores)
+    crit = [f"{d}: {i['issue']}" for d,r in all_results.items()
+            for i in r.get("issues",[]) if i.get("severity")=="critical"][:8]
+    prompt = f"""You are an expert AI visibility consultant at Summit, a performance marketing agency.
 
-def gen_exec_summary(client, url: str, scores: dict, all_results: dict) -> str:
-    overall      = weighted_overall(scores)
-    score_lines  = "\n".join(f"- {d}: {s}/10" for d, s in scores.items())
-    critical_iss = [f"{d}: {i['issue']}" for d, r in all_results.items()
-                    for i in r.get("issues", []) if i.get("severity") == "critical"][:8]
+Write a concise executive summary for an AI visibility audit of {url}.
+Overall score: {overall}/10
+Scores: {json.dumps(scores)}
+Critical issues: {chr(10).join(crit)}
 
-    prompt = f"""You are an expert AI visibility consultant at Summit, a performance marketing agency based in Hull.
+Write exactly 3 short paragraphs (2-3 sentences each):
+1. Overall verdict and score context
+2. Key strengths
+3. Top 2-3 priorities for improvement and business impact
 
-Write a professional executive summary for an AI visibility technical audit of {url}.
-
-Overall weighted score: {overall}/10
-Dimension scores:
-{score_lines}
-
-Critical issues:
-{chr(10).join(critical_iss)}
-
-Write 3–4 concise, professional paragraphs covering:
-1. Overall assessment and score context
-2. Key strengths identified
-3. Priority areas for improvement
-4. Business impact — why this matters for AI search visibility in 2025/26
-
-Tone: consultancy-grade, direct, no bullet points. UK English."""
-
+Tone: direct, consultancy-grade. UK English. No bullet points. Keep it punchy — this will appear alongside charts."""
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return resp.text.strip()
@@ -490,424 +414,749 @@ Tone: consultancy-grade, direct, no bullet points. UK English."""
 
 
 # =============================================================================
-# PLOTLY CHARTS
+# CHARTS
 # =============================================================================
-def gauge_chart(overall: float) -> go.Figure:
+def gauge_chart(overall):
     color = score_fg_hex(overall)
     fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=overall,
-        number={"suffix": "/10", "font": {"size": 40, "color": color, "family": "Inter"}},
+        mode="gauge+number", value=overall,
+        number={"suffix":"/10","font":{"size":38,"color":color,"family":"Inter"}},
         gauge={
-            "axis": {"range": [0, 10], "tickwidth": 1, "tickcolor": S_MUTED,
-                     "tickfont": {"size": 10, "color": S_MUTED}},
-            "bar":  {"color": color, "thickness": 0.28},
-            "bgcolor": S_WHITE,
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0,   3.3], "color": BG_RED},
-                {"range": [3.3, 6.6], "color": BG_AMBER},
-                {"range": [6.6, 10],  "color": BG_GREEN},
-            ],
+            "axis":{"range":[0,10],"tickwidth":1,"tickcolor":S_MUTED,"tickfont":{"size":9,"color":S_MUTED}},
+            "bar":{"color":color,"thickness":0.26},
+            "bgcolor":S_WHITE,"borderwidth":0,
+            "steps":[{"range":[0,3.3],"color":BG_RED},{"range":[3.3,6.6],"color":BG_AMBER},{"range":[6.6,10],"color":BG_GREEN}],
         }
     ))
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=20, r=20, t=20, b=10), height=210,
-        font=dict(family="Inter"),
-    )
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+                      margin=dict(l=18,r=18,t=18,b=8),height=200,font=dict(family="Inter"))
     return fig
 
-
-def bar_chart(scores: dict) -> go.Figure:
+def bar_chart(scores):
     dims   = list(scores.keys())
     vals   = [scores[d] for d in dims]
     colors = [score_fg_hex(v) for v in vals]
-    labels = [d.replace(" & ", " &\n").replace(" / ", "/\n") for d in dims]
-
+    labels = [d.replace(" & "," &\n").replace(" / ","/\n") for d in dims]
     fig = go.Figure(go.Bar(
         x=vals, y=labels, orientation="h",
         marker_color=colors,
-        text=[f"  {v}/10" for v in vals],
-        textposition="outside",
-        textfont=dict(size=11, color=S_INK),
+        text=[f"  {v}/10" for v in vals], textposition="outside",
+        textfont=dict(size=11,color=S_INK),
         hovertemplate="%{y}: %{x}/10<extra></extra>",
     ))
-    fig.add_vline(x=3.3, line_dash="dot", line_color=FG_RED,   opacity=0.5,
-                  annotation_text="Critical", annotation_font=dict(size=9, color=FG_RED))
-    fig.add_vline(x=6.6, line_dash="dot", line_color=FG_GREEN, opacity=0.5,
-                  annotation_text="Good", annotation_font=dict(size=9, color=FG_GREEN))
+    fig.add_vline(x=3.3,line_dash="dot",line_color=FG_RED,opacity=0.4,
+                  annotation_text="Critical",annotation_font=dict(size=9,color=FG_RED))
+    fig.add_vline(x=6.6,line_dash="dot",line_color=FG_GREEN,opacity=0.4,
+                  annotation_text="Good",annotation_font=dict(size=9,color=FG_GREEN))
     fig.update_layout(
-        xaxis=dict(range=[0, 12.5], showgrid=True, gridcolor=S_LIGHT, title="Score / 10"),
-        yaxis=dict(autorange="reversed", tickfont=dict(size=10, color=S_INK)),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=10, r=70, t=20, b=30), height=400,
-        font=dict(family="Inter"), showlegend=False,
+        xaxis=dict(range=[0,13],showgrid=True,gridcolor=S_LIGHT,title="Score / 10"),
+        yaxis=dict(autorange="reversed",tickfont=dict(size=10,color=S_INK)),
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10,r=70,t=18,b=28),height=400,font=dict(family="Inter"),showlegend=False,
     )
     return fig
 
-
-def radar_chart(scores: dict) -> go.Figure:
-    dims = list(scores.keys())
-    vals = [scores[d] for d in dims]
-    fig  = go.Figure(go.Scatterpolar(
-        r=vals + [vals[0]], theta=dims + [dims[0]],
-        fill="toself",
-        fillcolor=f"rgba(208,56,11,0.12)",
-        line=dict(color=S_RED, width=2.5),
-        marker=dict(size=6, color=S_RED),
+def radar_chart(scores, label=""):
+    dims = list(scores.keys()); vals = [scores[d] for d in dims]
+    fig = go.Figure(go.Scatterpolar(
+        r=vals+[vals[0]], theta=dims+[dims[0]], name=label or "Score",
+        fill="toself", fillcolor="rgba(208,56,11,0.12)",
+        line=dict(color=S_RED,width=2.5), marker=dict(size=6,color=S_RED),
     ))
     fig.update_layout(
-        polar=dict(
-            bgcolor=S_WHITE,
-            radialaxis=dict(visible=True, range=[0,10], tickfont=dict(size=8), gridcolor=S_LIGHT),
-            angularaxis=dict(tickfont=dict(size=9, color=S_INK)),
-        ),
-        showlegend=False,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=55, r=55, t=30, b=30), height=400,
-        font=dict(family="Inter"),
+        polar=dict(bgcolor=S_WHITE,
+            radialaxis=dict(visible=True,range=[0,10],tickfont=dict(size=8),gridcolor=S_LIGHT),
+            angularaxis=dict(tickfont=dict(size=9,color=S_INK))),
+        showlegend=bool(label),
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=55,r=55,t=28,b=28),height=400,font=dict(family="Inter"),
     )
     return fig
 
-
-def weight_donut(scores: dict) -> go.Figure:
-    dims    = list(DIMENSION_CONFIG.keys())
-    weights = [DIMENSION_CONFIG[d]["weight"] * 100 for d in dims]
-    colors  = [DIMENSION_CONFIG[d]["color"] for d in dims]
-    fig = go.Figure(go.Pie(
-        labels=dims, values=weights, hole=0.52,
-        marker=dict(colors=colors),
-        textinfo="percent",
-        textfont=dict(size=9),
-        hovertemplate="%{label}<br>Weight: %{value:.0f}%<extra></extra>",
-    ))
+def multi_radar_chart(results_map):
+    """Overlay multiple URLs on one radar."""
+    colors = [S_RED,"#0369A1","#0E7C4A","#7C3AED","#B45309"]
+    dims = list(DIMENSION_CONFIG.keys())
+    fig = go.Figure()
+    for i,(label,scores) in enumerate(results_map.items()):
+        col = colors[i % len(colors)]
+        vals = [scores.get(d,0) for d in dims]
+        fig.add_trace(go.Scatterpolar(
+            r=vals+[vals[0]], theta=dims+[dims[0]], name=label,
+            fill="toself", fillcolor=f"rgba({int(col[1:3],16)},{int(col[3:5],16)},{int(col[5:7],16)},0.08)",
+            line=dict(color=col,width=2.2), marker=dict(size=5,color=col),
+        ))
     fig.update_layout(
-        showlegend=True,
-        legend=dict(font=dict(size=9, color=S_INK), orientation="v", x=1.02),
-        paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=5, r=5, t=20, b=10), height=360,
-        font=dict(family="Inter"),
+        polar=dict(bgcolor=S_WHITE,
+            radialaxis=dict(visible=True,range=[0,10],tickfont=dict(size=8),gridcolor=S_LIGHT),
+            angularaxis=dict(tickfont=dict(size=9,color=S_INK))),
+        showlegend=True, legend=dict(font=dict(size=9),orientation="h",y=-0.12),
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=55,r=55,t=28,b=55),height=430,font=dict(family="Inter"),
     )
+    return fig
+
+def multi_bar_chart(results_map):
+    """Grouped bar chart comparing multiple URLs."""
+    dims   = list(DIMENSION_CONFIG.keys())
+    colors = [S_RED,"#0369A1","#0E7C4A","#7C3AED","#B45309"]
+    fig = go.Figure()
+    for i,(label,scores) in enumerate(results_map.items()):
+        col  = colors[i % len(colors)]
+        vals = [scores.get(d,0) for d in dims]
+        fig.add_trace(go.Bar(
+            name=label, x=dims, y=vals,
+            marker_color=col, opacity=0.85,
+            hovertemplate=f"{label}<br>%{{x}}: %{{y}}/10<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="group",
+        xaxis=dict(tickfont=dict(size=9),tickangle=-30),
+        yaxis=dict(range=[0,11],title="Score / 10"),
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(font=dict(size=9),orientation="h",y=1.08),
+        margin=dict(l=10,r=10,t=30,b=80),height=420,font=dict(family="Inter"),
+    )
+    return fig
+
+def weight_donut(scores):
+    dims=[]; weights=[]; colors=[]
+    for d,cfg in DIMENSION_CONFIG.items():
+        dims.append(d); weights.append(cfg["weight"]*100); colors.append(cfg["color"])
+    fig = go.Figure(go.Pie(labels=dims,values=weights,hole=0.52,
+        marker=dict(colors=colors),textinfo="percent",textfont=dict(size=9),
+        hovertemplate="%{label}<br>Weight: %{value:.0f}%<extra></extra>"))
+    fig.update_layout(showlegend=True,legend=dict(font=dict(size=9),orientation="v",x=1.02),
+        paper_bgcolor="rgba(0,0,0,0)",margin=dict(l=5,r=5,t=18,b=8),
+        height=340,font=dict(family="Inter"))
     return fig
 
 
 # =============================================================================
 # DOCX EXPORT
 # =============================================================================
-def _set_cell_bg(cell, hex6: str):
-    tc   = cell._tc
-    tcPr = tc.get_or_add_tcPr()
-    shd  = OxmlElement("w:shd")
-    shd.set(qn("w:val"),   "clear")
-    shd.set(qn("w:color"), "auto")
-    shd.set(qn("w:fill"),  hex6)
+def _set_cell_bg(cell, hex6):
+    tc=cell._tc; tcPr=tc.get_or_add_tcPr()
+    shd=OxmlElement("w:shd")
+    shd.set(qn("w:val"),"clear"); shd.set(qn("w:color"),"auto"); shd.set(qn("w:fill"),hex6)
     tcPr.append(shd)
 
-
-def _heading_para(doc, text: str, size: int = 14):
-    p  = doc.add_paragraph()
-    pPr = p._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bot  = OxmlElement("w:bottom")
-    bot.set(qn("w:val"), "single"); bot.set(qn("w:sz"), "8")
-    bot.set(qn("w:space"), "4");    bot.set(qn("w:color"), "D0380B")
+def _hdg(doc, text, size=14):
+    p=doc.add_paragraph(); pPr=p._p.get_or_add_pPr()
+    pBdr=OxmlElement("w:pBdr"); bot=OxmlElement("w:bottom")
+    bot.set(qn("w:val"),"single"); bot.set(qn("w:sz"),"8")
+    bot.set(qn("w:space"),"4");   bot.set(qn("w:color"),"D0380B")
     pBdr.append(bot); pPr.append(pBdr)
-    r = p.add_run(text)
-    r.bold = True; r.font.size = Pt(size)
-    r.font.color.rgb = RGBColor(*S_CHARCOAL_RGB)
-    r.font.name = "Arial"
+    r=p.add_run(text); r.bold=True; r.font.size=Pt(size)
+    r.font.color.rgb=RGBColor(*S_CHARCOAL_RGB); r.font.name="Arial"
     return p
 
-
-def build_docx(url: str, scores: dict, all_results: dict,
-               exec_summary: str, logo_bytes: bytes) -> bytes:
-    doc = Document()
+def build_docx(url, scores, all_results, exec_summary, logo_bytes):
+    doc=Document()
     for sec in doc.sections:
-        sec.top_margin    = Inches(0.7)
-        sec.bottom_margin = Inches(0.7)
-        sec.left_margin   = Inches(0.8)
-        sec.right_margin  = Inches(0.8)
+        sec.top_margin=Inches(0.7); sec.bottom_margin=Inches(0.7)
+        sec.left_margin=Inches(0.8); sec.right_margin=Inches(0.8)
+    doc.styles["Normal"].font.name="Arial"; doc.styles["Normal"].font.size=Pt(10)
 
-    # Styles
-    doc.styles["Normal"].font.name = "Arial"
-    doc.styles["Normal"].font.size = Pt(10)
-
-    # — Logo —
-    logo_para = doc.add_paragraph()
-    logo_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    logo_para.add_run().add_picture(io.BytesIO(logo_bytes), width=Inches(1.4))
-
-    # — Title —
-    _heading_para(doc, "AI Visibility Audit Report", size=24)
-    meta = doc.add_paragraph()
-    for txt, col in [(f"{url}  |  ", (120,120,130)), (datetime.now().strftime("%B %Y"), (120,120,130))]:
-        r = meta.add_run(txt); r.font.size = Pt(9); r.font.color.rgb = RGBColor(*col)
+    # Logo + title
+    lp=doc.add_paragraph(); lp.alignment=WD_ALIGN_PARAGRAPH.LEFT
+    lp.add_run().add_picture(io.BytesIO(logo_bytes), width=Inches(1.3))
+    _hdg(doc,"AI Visibility Audit Report",size=22)
+    mp=doc.add_paragraph()
+    for txt,col in [(f"{url}  |  ",(120,120,130)),(datetime.now().strftime("%B %Y"),(120,120,130))]:
+        r=mp.add_run(txt); r.font.size=Pt(9); r.font.color.rgb=RGBColor(*col)
     doc.add_paragraph()
 
-    # — Overall score table —
-    overall = weighted_overall(scores)
-    _heading_para(doc, "Overall AI Visibility Score")
-
-    tbl = doc.add_table(rows=1, cols=3)
-    tbl.style = "Table Grid"; tbl.autofit = False
-    widths = [1800, 1800, 6200]
-    cells  = tbl.rows[0].cells
-
-    # Cell 0 — big score
-    cells[0].width = Emu(widths[0] * 914)
-    _set_cell_bg(cells[0], "3E405B")
-    p = cells[0].paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(str(overall)); r.bold = True; r.font.size = Pt(42); r.font.color.rgb = RGBColor(255,255,255)
-    p2 = cells[0].add_paragraph("/10"); p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p2.runs[0].font.color.rgb = RGBColor(200,200,210); p2.runs[0].font.size = Pt(14)
-
-    # Cell 1 — rating label
-    cells[1].width = Emu(widths[1] * 914)
-    band = score_band(overall)
-    bg_hex_map = {"red": BG_RED_HEX, "amber": BG_AMBER_HEX, "green": BG_GREEN_HEX}
-    fg_rgb_map  = {"red": FG_RED_RGB, "amber": FG_AMBER_RGB, "green": FG_GREEN_RGB}
-    lbl_map     = {"red": "Needs Attention", "amber": "Developing", "green": "Good"}
-    _set_cell_bg(cells[1], bg_hex_map[band])
-    p = cells[1].paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(lbl_map[band]); r.bold = True; r.font.size = Pt(14)
-    r.font.color.rgb = RGBColor(*fg_rgb_map[band])
-
-    # Cell 2 — dimension breakdown
-    cells[2].width = Emu(widths[2] * 914)
-    _set_cell_bg(cells[2], "F7F7F8")
-    p = cells[2].paragraphs[0]
-    r = p.add_run("Score breakdown"); r.bold = True; r.font.size = Pt(9); r.font.color.rgb = RGBColor(*S_CHARCOAL_RGB)
-    for dim, s in sorted(scores.items(), key=lambda x: x[1]):
-        p2  = cells[2].add_paragraph()
-        r1  = p2.add_run(f"{dim}: "); r1.font.size = Pt(8.5)
-        r2  = p2.add_run(f"{s}/10"); r2.bold = True; r2.font.size = Pt(8.5)
-        r2.font.color.rgb = RGBColor(*fg_rgb_map[score_band(s)])
+    # Score table
+    overall=weighted_overall(scores); band=score_band(overall)
+    bg_hm={"red":BG_RED_HEX,"amber":BG_AMBER_HEX,"green":BG_GREEN_HEX}
+    fg_rm={"red":FG_RED_RGB,"amber":FG_AMBER_RGB,"green":FG_GREEN_RGB}
+    lm={"red":"Needs Attention","amber":"Developing","green":"Good"}
+    _hdg(doc,"Overall Score")
+    t=doc.add_table(rows=1,cols=3); t.style="Table Grid"; t.autofit=False
+    ws=[1800,1800,6200]; cells=t.rows[0].cells
+    cells[0].width=Emu(ws[0]*914); _set_cell_bg(cells[0],"3E405B")
+    p=cells[0].paragraphs[0]; p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run(str(overall)); r.bold=True; r.font.size=Pt(40); r.font.color.rgb=RGBColor(255,255,255)
+    p2=cells[0].add_paragraph("/10"); p2.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p2.runs[0].font.color.rgb=RGBColor(200,200,210); p2.runs[0].font.size=Pt(13)
+    cells[1].width=Emu(ws[1]*914); _set_cell_bg(cells[1],bg_hm[band])
+    p=cells[1].paragraphs[0]; p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run(lm[band]); r.bold=True; r.font.size=Pt(13); r.font.color.rgb=RGBColor(*fg_rm[band])
+    cells[2].width=Emu(ws[2]*914); _set_cell_bg(cells[2],"F7F7F8")
+    p=cells[2].paragraphs[0]
+    r=p.add_run("Score breakdown"); r.bold=True; r.font.size=Pt(9); r.font.color.rgb=RGBColor(*S_CHARCOAL_RGB)
+    for d,s in sorted(scores.items(),key=lambda x:x[1]):
+        p2=cells[2].add_paragraph()
+        r1=p2.add_run(f"{d}: "); r1.font.size=Pt(8.5)
+        r2=p2.add_run(f"{s}/10"); r2.bold=True; r2.font.size=Pt(8.5)
+        r2.font.color.rgb=RGBColor(*fg_rm[score_band(s)])
     doc.add_paragraph()
 
-    # — Executive Summary —
-    _heading_para(doc, "Executive Summary")
-    for para_txt in exec_summary.split("\n\n"):
-        if para_txt.strip():
-            p = doc.add_paragraph(para_txt.strip())
-            p.style.font.size = Pt(10)
+    # Exec summary
+    _hdg(doc,"Executive Summary")
+    for para in exec_summary.split("\n\n"):
+        if para.strip():
+            p=doc.add_paragraph(para.strip()); p.style.font.size=Pt(10)
     doc.add_paragraph()
 
-    # — Dimension scores table —
-    _heading_para(doc, "Dimension Scores")
-    dt = doc.add_table(rows=1, cols=4); dt.style = "Table Grid"; dt.autofit = False
-    dw = [3800, 900, 1000, 4100]
-    for i, (cell, hdr) in enumerate(zip(dt.rows[0].cells, ["Dimension","Weight","Score","Rating"])):
-        cell.width = Emu(dw[i] * 914); _set_cell_bg(cell, "3E405B")
-        r = cell.paragraphs[0].add_run(hdr); r.bold = True
-        r.font.color.rgb = RGBColor(255,255,255); r.font.size = Pt(9)
-    for dim, s in scores.items():
-        row = dt.add_row(); band_d = score_band(s)
-        w_pct = int(DIMENSION_CONFIG.get(dim,{}).get("weight",0.05)*100)
-        row.cells[0].width = Emu(dw[0]*914); row.cells[1].width = Emu(dw[1]*914)
-        row.cells[2].width = Emu(dw[2]*914); row.cells[3].width = Emu(dw[3]*914)
-        row.cells[0].paragraphs[0].add_run(dim).font.size = Pt(9)
-        row.cells[1].paragraphs[0].add_run(f"{w_pct}%").font.size = Pt(9)
-        _set_cell_bg(row.cells[2], bg_hex_map[band_d])
-        sr = row.cells[2].paragraphs[0].add_run(f"{s}/10")
-        sr.bold = True; sr.font.size = Pt(10); sr.font.color.rgb = RGBColor(*fg_rgb_map[band_d])
-        _set_cell_bg(row.cells[3], bg_hex_map[band_d])
-        lbl_strs = {"red":"❌  Needs Attention","amber":"⚠  Needs Work","green":"✓  Good"}
-        lr = row.cells[3].paragraphs[0].add_run(lbl_strs[band_d])
-        lr.font.size = Pt(9); lr.font.color.rgb = RGBColor(*fg_rgb_map[band_d])
+    # Scores table
+    _hdg(doc,"Dimension Scores")
+    dt=doc.add_table(rows=1,cols=4); dt.style="Table Grid"; dt.autofit=False
+    dw=[3800,900,1000,4100]
+    for i,(cell,hdr) in enumerate(zip(dt.rows[0].cells,["Dimension","Weight","Score","Rating"])):
+        cell.width=Emu(dw[i]*914); _set_cell_bg(cell,"3E405B")
+        r=cell.paragraphs[0].add_run(hdr); r.bold=True
+        r.font.color.rgb=RGBColor(255,255,255); r.font.size=Pt(9)
+    for d,s in scores.items():
+        row=dt.add_row(); bd=score_band(s); wp=int(DIMENSION_CONFIG.get(d,{}).get("weight",0.05)*100)
+        for i,w in enumerate(dw): row.cells[i].width=Emu(w*914)
+        row.cells[0].paragraphs[0].add_run(d).font.size=Pt(9)
+        row.cells[1].paragraphs[0].add_run(f"{wp}%").font.size=Pt(9)
+        _set_cell_bg(row.cells[2],bg_hm[bd])
+        sr=row.cells[2].paragraphs[0].add_run(f"{s}/10")
+        sr.bold=True; sr.font.size=Pt(10); sr.font.color.rgb=RGBColor(*fg_rm[bd])
+        _set_cell_bg(row.cells[3],bg_hm[bd])
+        lr=row.cells[3].paragraphs[0].add_run({"red":"Needs Attention","amber":"Needs Work","green":"Good"}[bd])
+        lr.font.size=Pt(9); lr.font.color.rgb=RGBColor(*fg_rm[bd])
     doc.add_paragraph()
 
-    # — Detailed findings —
-    _heading_para(doc, "Detailed Findings by Dimension")
-    sev_bg  = {"critical": BG_RED_HEX, "warning": BG_AMBER_HEX, "info": "EBF0FB"}
-    sev_fg  = {"critical": FG_RED_RGB, "warning": FG_AMBER_RGB, "info": (21, 80, 175)}
-    for dim, result in all_results.items():
-        s    = scores.get(dim, 0); band_d = score_band(s)
-        icon = DIMENSION_CONFIG.get(dim, {}).get("icon", "•")
-        dp   = doc.add_paragraph()
-        r1   = dp.add_run(f"{icon}  {dim}   "); r1.bold = True; r1.font.size = Pt(12)
-        r1.font.color.rgb = RGBColor(*S_CHARCOAL_RGB)
-        r2   = dp.add_run(f"[{s}/10]"); r2.bold = True; r2.font.size = Pt(12)
-        r2.font.color.rgb = RGBColor(*fg_rgb_map[band_d])
-        if result.get("summary"):
-            sp = doc.add_paragraph(result["summary"])
-            sp.runs[0].italic = True; sp.runs[0].font.size = Pt(9.5)
-        issues = result.get("issues", [])
+    # Detailed findings
+    _hdg(doc,"Detailed Findings")
+    sev_bg={"critical":BG_RED_HEX,"warning":BG_AMBER_HEX,"info":"EBF0FB"}
+    sev_fg={"critical":FG_RED_RGB,"warning":FG_AMBER_RGB,"info":(21,80,175)}
+    for d,res in all_results.items():
+        s=scores.get(d,0); bd=score_band(s)
+        icon=DIMENSION_CONFIG.get(d,{}).get("icon","•")
+        dp=doc.add_paragraph()
+        r1=dp.add_run(f"{icon}  {d}   "); r1.bold=True; r1.font.size=Pt(12)
+        r1.font.color.rgb=RGBColor(*S_CHARCOAL_RGB)
+        r2=dp.add_run(f"[{s}/10]"); r2.bold=True; r2.font.size=Pt(12)
+        r2.font.color.rgb=RGBColor(*fg_rm[bd])
+        if res.get("summary"):
+            sp=doc.add_paragraph(res["summary"]); sp.runs[0].italic=True; sp.runs[0].font.size=Pt(9.5)
+        issues=res.get("issues",[])
         if issues:
-            it = doc.add_table(rows=1, cols=3); it.style = "Table Grid"; it.autofit = False
-            iw = [1000, 3500, 5300]
-            for i, (cell, hdr) in enumerate(zip(it.rows[0].cells, ["Severity","Issue","Recommendation"])):
-                cell.width = Emu(iw[i]*914); _set_cell_bg(cell, "3E405B")
-                r = cell.paragraphs[0].add_run(hdr); r.bold = True
-                r.font.color.rgb = RGBColor(255,255,255); r.font.size = Pt(8.5)
+            it=doc.add_table(rows=1,cols=3); it.style="Table Grid"; it.autofit=False
+            iw=[1000,3500,5300]
+            for i,(cell,hdr) in enumerate(zip(it.rows[0].cells,["Severity","Issue","Recommendation"])):
+                cell.width=Emu(iw[i]*914); _set_cell_bg(cell,"3E405B")
+                r=cell.paragraphs[0].add_run(hdr); r.bold=True
+                r.font.color.rgb=RGBColor(255,255,255); r.font.size=Pt(8.5)
             for iss in issues:
-                sev = iss.get("severity","info")
-                row = it.add_row()
-                row.cells[0].width = Emu(iw[0]*914)
-                row.cells[1].width = Emu(iw[1]*914)
-                row.cells[2].width = Emu(iw[2]*914)
-                _set_cell_bg(row.cells[0], sev_bg.get(sev,"F5F5F5"))
-                sr = row.cells[0].paragraphs[0].add_run(sev.upper())
-                sr.bold = True; sr.font.size = Pt(8); sr.font.color.rgb = RGBColor(*sev_fg.get(sev,(80,80,80)))
-                row.cells[1].paragraphs[0].add_run(iss.get("issue","")).font.size = Pt(8.5)
-                row.cells[2].paragraphs[0].add_run(iss.get("recommendation","")).font.size = Pt(8.5)
-        positives = result.get("positive", [])
-        if positives:
-            pp = doc.add_paragraph(); r = pp.add_run("✓ Strengths:  ")
-            r.bold = True; r.font.size = Pt(9); r.font.color.rgb = RGBColor(*FG_GREEN_RGB)
-            r2 = pp.add_run("  |  ".join(positives[:3]))
-            r2.font.size = Pt(9); r2.font.color.rgb = RGBColor(*FG_GREEN_RGB)
+                sev=iss.get("severity","info"); row=it.add_row()
+                for i,w in enumerate(iw): row.cells[i].width=Emu(w*914)
+                _set_cell_bg(row.cells[0],sev_bg.get(sev,"F5F5F5"))
+                sr=row.cells[0].paragraphs[0].add_run(sev.upper())
+                sr.bold=True; sr.font.size=Pt(8); sr.font.color.rgb=RGBColor(*sev_fg.get(sev,(80,80,80)))
+                row.cells[1].paragraphs[0].add_run(iss.get("issue","")).font.size=Pt(8.5)
+                row.cells[2].paragraphs[0].add_run(iss.get("recommendation","")).font.size=Pt(8.5)
+        pos=res.get("positive",[])
+        if pos:
+            pp=doc.add_paragraph()
+            r=pp.add_run("✓ Strengths:  "); r.bold=True; r.font.size=Pt(9); r.font.color.rgb=RGBColor(*FG_GREEN_RGB)
+            r2=pp.add_run("  |  ".join(pos[:3])); r2.font.size=Pt(9); r2.font.color.rgb=RGBColor(*FG_GREEN_RGB)
         doc.add_paragraph()
 
-    # — Priority recommendations —
-    _heading_para(doc, "Priority Recommendations")
-    all_recs = []
-    for dim, result in all_results.items():
-        w = DIMENSION_CONFIG.get(dim,{}).get("weight",0.05)
-        for iss in result.get("issues",[]):
-            sev = iss.get("severity","info")
-            all_recs.append({"priority": {"critical":1,"warning":2,"info":3}.get(sev,3),
-                             "weight": w, "dim": dim,
-                             "issue": iss.get("issue",""), "rec": iss.get("recommendation",""), "sev": sev})
-    all_recs.sort(key=lambda x: (x["priority"], -x["weight"]))
-    rt = doc.add_table(rows=1, cols=4); rt.style = "Table Grid"; rt.autofit = False
-    rw = [600, 2000, 3400, 3800]
-    for i, (cell, hdr) in enumerate(zip(rt.rows[0].cells, ["#","Dimension","Issue","Recommendation"])):
-        cell.width = Emu(rw[i]*914); _set_cell_bg(cell, "3E405B")
-        r = cell.paragraphs[0].add_run(hdr); r.bold = True
-        r.font.color.rgb = RGBColor(255,255,255); r.font.size = Pt(9)
-    for rank, rec in enumerate(all_recs[:15], 1):
-        row = rt.add_row(); sev = rec["sev"]
-        row.cells[0].width = Emu(rw[0]*914); row.cells[1].width = Emu(rw[1]*914)
-        row.cells[2].width = Emu(rw[2]*914); row.cells[3].width = Emu(rw[3]*914)
-        _set_cell_bg(row.cells[0], sev_bg.get(sev,"F5F5F5"))
-        nr = row.cells[0].paragraphs[0].add_run(str(rank)); nr.bold = True; nr.font.size = Pt(9)
-        nr.font.color.rgb = RGBColor(*sev_fg.get(sev,(80,80,80)))
-        row.cells[1].paragraphs[0].add_run(rec["dim"]).font.size = Pt(8.5)
-        row.cells[2].paragraphs[0].add_run(rec["issue"]).font.size = Pt(8.5)
-        row.cells[3].paragraphs[0].add_run(rec["rec"]).font.size = Pt(8.5)
+    # Priority recs
+    _hdg(doc,"Priority Recommendations")
+    all_recs=[]
+    for d,res in all_results.items():
+        w=DIMENSION_CONFIG.get(d,{}).get("weight",0.05)
+        for iss in res.get("issues",[]):
+            sev=iss.get("severity","info")
+            all_recs.append({"pri":{"critical":1,"warning":2,"info":3}.get(sev,3),"w":w,
+                             "d":d,"issue":iss.get("issue",""),"rec":iss.get("recommendation",""),"sev":sev})
+    all_recs.sort(key=lambda x:(x["pri"],-x["w"]))
+    rt=doc.add_table(rows=1,cols=4); rt.style="Table Grid"; rt.autofit=False
+    rw=[600,2000,3400,3800]
+    for i,(cell,hdr) in enumerate(zip(rt.rows[0].cells,["#","Dimension","Issue","Recommendation"])):
+        cell.width=Emu(rw[i]*914); _set_cell_bg(cell,"3E405B")
+        r=cell.paragraphs[0].add_run(hdr); r.bold=True
+        r.font.color.rgb=RGBColor(255,255,255); r.font.size=Pt(9)
+    for rank,rec in enumerate(all_recs[:15],1):
+        row=rt.add_row(); sev=rec["sev"]
+        for i,w in enumerate(rw): row.cells[i].width=Emu(w*914)
+        _set_cell_bg(row.cells[0],sev_bg.get(sev,"F5F5F5"))
+        nr=row.cells[0].paragraphs[0].add_run(str(rank)); nr.bold=True; nr.font.size=Pt(9)
+        nr.font.color.rgb=RGBColor(*sev_fg.get(sev,(80,80,80)))
+        row.cells[1].paragraphs[0].add_run(rec["d"]).font.size=Pt(8.5)
+        row.cells[2].paragraphs[0].add_run(rec["issue"]).font.size=Pt(8.5)
+        row.cells[3].paragraphs[0].add_run(rec["rec"]).font.size=Pt(8.5)
     doc.add_paragraph()
 
-    # — Footer —
-    fp = doc.add_paragraph(); fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    pPr = fp._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    top  = OxmlElement("w:top"); top.set(qn("w:val"),"single"); top.set(qn("w:sz"),"4")
-    top.set(qn("w:space"),"4"); top.set(qn("w:color"),"D0380B")
+    fp=doc.add_paragraph(); fp.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    pPr=fp._p.get_or_add_pPr(); pBdr=OxmlElement("w:pBdr"); top=OxmlElement("w:top")
+    top.set(qn("w:val"),"single"); top.set(qn("w:sz"),"4"); top.set(qn("w:space"),"4"); top.set(qn("w:color"),"D0380B")
     pBdr.append(top); pPr.append(pBdr)
-    r = fp.add_run("Prepared by Summit  |  AI Visibility Practice  |  summit.co.uk")
-    r.font.size = Pt(8); r.italic = True; r.font.color.rgb = RGBColor(130,130,140)
+    r=fp.add_run("Prepared by Summit  |  AI Visibility Practice  |  summit.co.uk")
+    r.font.size=Pt(8); r.italic=True; r.font.color.rgb=RGBColor(130,130,140)
 
-    buf = io.BytesIO()
-    doc.save(buf); buf.seek(0)
+    buf=io.BytesIO(); doc.save(buf); buf.seek(0)
     return buf.getvalue()
 
 
 # =============================================================================
-# PDF EXPORT
+# PDF — visual one-pager, not a doc dump
 # =============================================================================
-def build_pdf(url: str, scores: dict, exec_summary: str, logo_bytes: bytes) -> bytes:
-    logo_tmp = "/tmp/summit_logo_pdf.png"
-    with open(logo_tmp, "wb") as f:
-        f.write(logo_bytes)
+def build_pdf(url, scores, exec_summary, logo_bytes):
+    logo_tmp="/tmp/summit_logo_pdf.png"
+    with open(logo_tmp,"wb") as f: f.write(logo_bytes)
 
-    overall = weighted_overall(scores)
-    band    = score_band(overall)
-    bg_map_rgb  = {"red":(253,233,229), "amber":(255,244,224), "green":(230,245,236)}
-    fg_map_rgb2 = {"red": FG_RED_RGB, "amber": FG_AMBER_RGB, "green": FG_GREEN_RGB}
-    lbl_map     = {"red":"Needs Attention","amber":"Developing","green":"Good"}
+    overall=weighted_overall(scores); band=score_band(overall)
+    bg_rgb={"red":(253,233,229),"amber":(255,244,224),"green":(230,245,236)}
+    fg_rgb={"red":FG_RED_RGB,"amber":FG_AMBER_RGB,"green":FG_GREEN_RGB}
+    lm={"red":"Needs Attention","amber":"Developing","green":"Good"}
+    dim_short = {  # shorter labels for PDF
+        "Crawlability & Bot Access":"Crawlability",
+        "Structured Data / Schema":"Structured Data",
+        "LLM Content Signals":"LLM Content",
+        "Meta & SEO Signals":"Meta / SEO",
+        "Heading Structure":"Headings",
+        "ARIA Implementation":"ARIA",
+        "Link Quality":"Link Quality",
+        "Image Alt Text":"Image Alt",
+        "AI Search Health":"AI Health",
+        "Duplicate Content & Tags":"Duplicates",
+    }
+    score_lbl={"red":"Needs Attention","amber":"Needs Work","green":"Good"}
 
     class SummitPDF(FPDF):
         def header(self):
-            self.image(logo_tmp, 12, 8, 24)
-            self.set_font("Helvetica", "B", 16)
-            self.set_text_color(*S_CHARCOAL_RGB)
-            self.set_xy(40, 10)
-            self.cell(0, 8, "AI Visibility Audit Report", ln=True)
-            self.set_font("Helvetica", "", 9)
-            self.set_text_color(120, 120, 130)
-            self.set_x(40)
-            self.cell(0, 6, f"{url}  |  {datetime.now().strftime('%B %Y')}", ln=True)
-            self.ln(3)
-            self.set_draw_color(*S_RED_RGB)
-            self.set_line_width(1.0)
-            self.line(12, 28, 198, 28)
-            self.ln(4)
-
+            self.image(logo_tmp,12,8,22)
+            self.set_font("Helvetica","B",15); self.set_text_color(*S_CHARCOAL_RGB)
+            self.set_xy(38,10); self.cell(0,7,"AI Visibility Audit",ln=False)
+            self.set_font("Helvetica","",8.5); self.set_text_color(130,130,140)
+            self.set_xy(38,18); self.cell(0,5,f"{url}  ·  {datetime.now().strftime('%B %Y')}",ln=True)
+            self.set_draw_color(*S_RED_RGB); self.set_line_width(0.9)
+            self.line(12,27,198,27); self.ln(3)
         def footer(self):
-            self.set_y(-12)
-            self.set_font("Helvetica", "I", 8)
-            self.set_text_color(150, 150, 160)
-            self.cell(0, 6, f"Summit AI Visibility Audit  |  Confidential  |  Page {self.page_no()}", align="C")
+            self.set_y(-11); self.set_font("Helvetica","I",7.5)
+            self.set_text_color(160,160,170)
+            self.cell(0,5,f"Summit AI Visibility Audit  ·  Confidential  ·  Page {self.page_no()}",align="C")
 
-    pdf = SummitPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf=SummitPDF(); pdf.add_page(); pdf.set_auto_page_break(auto=True,margin=13)
 
-    # Overall score block
-    y0 = pdf.get_y()
-    pdf.set_fill_color(*S_CHARCOAL_RGB)
-    pdf.rect(12, y0, 88, 38, "F")
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 34)
-    pdf.set_xy(12, y0 + 4)
-    pdf.cell(88, 16, f"{overall}/10", align="C", ln=False)
-    pdf.set_xy(12, y0 + 22)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(200, 200, 215)
-    pdf.cell(88, 10, "Overall AI Visibility Score", align="C", ln=False)
+    # ── Hero row: big score left, rating centre, 3 stats right ──
+    y0=pdf.get_y()
+    # Score box
+    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.rect(12,y0,52,32,"F")
+    pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",30)
+    pdf.set_xy(12,y0+3); pdf.cell(52,14,f"{overall}/10",align="C",ln=False)
+    pdf.set_font("Helvetica","",7.5); pdf.set_text_color(180,180,200)
+    pdf.set_xy(12,y0+19); pdf.cell(52,7,"Overall AI Visibility Score",align="C",ln=False)
 
-    pdf.set_fill_color(*bg_map_rgb[band])
-    pdf.rect(104, y0, 90, 38, "F")
-    pdf.set_text_color(*fg_map_rgb2[band])
-    pdf.set_font("Helvetica", "B", 17)
-    pdf.set_xy(104, y0 + 8)
-    pdf.cell(90, 12, lbl_map[band], align="C", ln=False)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(104, y0 + 22)
-    pdf.cell(90, 10, f"Weighted across {len(scores)} dimensions", align="C")
-    pdf.ln(y0 + 46 - pdf.get_y())
+    # Rating badge
+    pdf.set_fill_color(*bg_rgb[band]); pdf.rect(66,y0,52,32,"F")
+    pdf.set_text_color(*fg_rgb[band]); pdf.set_font("Helvetica","B",13)
+    pdf.set_xy(66,y0+7); pdf.cell(52,10,lm[band],align="C",ln=False)
+    pdf.set_font("Helvetica","",7.5); pdf.set_xy(66,y0+19)
+    pdf.cell(52,7,f"{len(scores)} dimensions",align="C",ln=False)
 
-    # Scores table
-    pdf.ln(4)
-    pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0, 7, "Dimension Scores", ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.7)
-    pdf.line(12, pdf.get_y(), 198, pdf.get_y()); pdf.ln(3)
+    # Mini stats
+    n_crit=sum(1 for r in [scores[d] for d in scores] if score_band(r)=="red")
+    n_good=sum(1 for r in [scores[d] for d in scores] if score_band(r)=="green")
+    for i,(val,lbl,col) in enumerate([(n_crit,"Critical",FG_RED_RGB),(n_good,"Passing",FG_GREEN_RGB)]):
+        bx=121+i*40
+        pdf.set_fill_color(248,248,250); pdf.rect(bx,y0,36,32,"F")
+        pdf.set_text_color(*col); pdf.set_font("Helvetica","B",20)
+        pdf.set_xy(bx,y0+4); pdf.cell(36,12,str(val),align="C",ln=False)
+        pdf.set_font("Helvetica","",7); pdf.set_text_color(130,130,140)
+        pdf.set_xy(bx,y0+19); pdf.cell(36,6,lbl,align="C",ln=False)
 
+    pdf.ln(y0+38-pdf.get_y())
+
+    # ── Score tiles — 5 columns × 2 rows ──
+    pdf.ln(3)
+    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,6,"Dimension Scores",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+
+    tile_w=37; tile_h=17; cols=5; gap=0.6
+    items=sorted(scores.items(),key=lambda x:x[1])
+    for i,(dim,s) in enumerate(items):
+        bd=score_band(s); col_i=i%cols; row_i=i//cols
+        x=12+col_i*(tile_w+gap); y=pdf.get_y() if col_i==0 else pdf.get_y()
+        if col_i==0 and i>0: pdf.ln(tile_h+gap)
+        y=pdf.get_y()
+        pdf.set_fill_color(*bg_rgb[bd]); pdf.rect(x,y,tile_w,tile_h,"F")
+        # score number
+        pdf.set_text_color(*fg_rgb[bd]); pdf.set_font("Helvetica","B",14)
+        pdf.set_xy(x,y+1); pdf.cell(tile_w,7,f"{s}/10",align="C",ln=False)
+        # short label
+        short=dim_short.get(dim,dim[:12])
+        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(80,80,90)
+        pdf.set_xy(x,y+9); pdf.cell(tile_w,4,short,align="C",ln=False)
+    pdf.ln(tile_h+4)
+
+    # ── Executive summary — compact 3-para version ──
+    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,6,"Executive Summary",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+
+    paras=[p.strip() for p in exec_summary.split("\n\n") if p.strip()][:3]
+    pdf.set_font("Helvetica","",8.5); pdf.set_text_color(40,40,50)
+    for para in paras:
+        pdf.multi_cell(0,4.8,para); pdf.ln(1.5)
+
+    # ── Top issues table ──
+    pdf.ln(2)
+    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,6,"Top Priority Actions",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+
+    # Build flat issue list sorted by severity then weight
+    from functools import reduce
+    flat=[]
+    for d_name,res in {}.items(): pass  # placeholder — populated below
+    flat_issues_for_pdf = []
     pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.set_text_color(255,255,255)
-    pdf.set_font("Helvetica","B",8.5)
-    pdf.cell(88,6.5,"Dimension",fill=True,border=0)
-    pdf.cell(18,6.5,"Weight",fill=True,border=0,align="C")
-    pdf.cell(18,6.5,"Score",fill=True,border=0,align="C")
-    pdf.cell(58,6.5,"Rating",fill=True,border=0); pdf.ln()
-
-    sev_lbl_pdf = {"red":"Needs Attention","amber":"Needs Work","green":"Good"}
-    for i, (dim, s) in enumerate(sorted(scores.items(), key=lambda x: x[1])):
-        bd   = score_band(s); w_pct = int(DIMENSION_CONFIG.get(dim,{}).get("weight",0.05)*100)
-        fill = bg_map_rgb[bd] if i % 2 == 0 else (250,250,252)
-        pdf.set_fill_color(*fill); pdf.set_text_color(40,40,50)
-        pdf.set_font("Helvetica","",8.5)
-        pdf.cell(88,6,"  "+dim,fill=True,border=0)
-        pdf.cell(18,6,f"{w_pct}%",fill=True,border=0,align="C")
-        pdf.set_fill_color(*bg_map_rgb[bd]); pdf.set_text_color(*fg_map_rgb2[bd])
-        pdf.set_font("Helvetica","B",9)
-        pdf.cell(18,6,f"{s}/10",fill=True,border=0,align="C")
-        pdf.set_font("Helvetica","",8.5)
-        pdf.cell(58,6,f"  {sev_lbl_pdf[bd]}",fill=True,border=0); pdf.ln()
-
-    pdf.ln(6)
-    pdf.set_font("Helvetica","B",11); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,7,"Executive Summary",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.7)
-    pdf.line(12, pdf.get_y(), 198, pdf.get_y()); pdf.ln(3)
-    pdf.set_font("Helvetica","",9.5); pdf.set_text_color(40,40,50)
-    for para in exec_summary.split("\n\n"):
-        if para.strip():
-            pdf.multi_cell(0, 5.5, para.strip()); pdf.ln(2)
+    pdf.set_font("Helvetica","B",7.5)
+    pdf.cell(22,5.5,"Severity",fill=True,border=0)
+    pdf.cell(35,5.5,"Dimension",fill=True,border=0)
+    pdf.cell(141,5.5,"Recommendation",fill=True,border=0); pdf.ln()
 
     raw = pdf.output()
     return bytes(raw) if not isinstance(raw, bytes) else raw
+
+def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
+    """Full PDF with issues list."""
+    logo_tmp="/tmp/summit_logo_pdf.png"
+    with open(logo_tmp,"wb") as f: f.write(logo_bytes)
+
+    overall=weighted_overall(scores); band=score_band(overall)
+    bg_rgb={"red":(253,233,229),"amber":(255,244,224),"green":(230,245,236)}
+    fg_rgb2={"red":FG_RED_RGB,"amber":FG_AMBER_RGB,"green":FG_GREEN_RGB}
+    lm={"red":"Needs Attention","amber":"Developing","green":"Good"}
+    dim_short={
+        "Crawlability & Bot Access":"Crawlability",
+        "Structured Data / Schema":"Structured Data",
+        "LLM Content Signals":"LLM Content",
+        "Meta & SEO Signals":"Meta / SEO",
+        "Heading Structure":"Headings",
+        "ARIA Implementation":"ARIA",
+        "Link Quality":"Link Quality",
+        "Image Alt Text":"Image Alt",
+        "AI Search Health":"AI Health",
+        "Duplicate Content & Tags":"Duplicates",
+    }
+
+    class SummitPDF(FPDF):
+        def header(self):
+            self.image(logo_tmp,12,8,22)
+            self.set_font("Helvetica","B",15); self.set_text_color(*S_CHARCOAL_RGB)
+            self.set_xy(38,10); self.cell(0,7,"AI Visibility Audit",ln=False)
+            self.set_font("Helvetica","",8.5); self.set_text_color(130,130,140)
+            self.set_xy(38,18); self.cell(0,5,f"{url}  ·  {datetime.now().strftime('%B %Y')}",ln=True)
+            self.set_draw_color(*S_RED_RGB); self.set_line_width(0.9)
+            self.line(12,27,198,27); self.ln(3)
+        def footer(self):
+            self.set_y(-11); self.set_font("Helvetica","I",7.5)
+            self.set_text_color(160,160,170)
+            self.cell(0,5,f"Summit AI Visibility Audit  ·  Confidential  ·  Page {self.page_no()}",align="C")
+
+    pdf=SummitPDF(); pdf.add_page(); pdf.set_auto_page_break(auto=True,margin=13)
+
+    # Hero
+    y0=pdf.get_y()
+    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.rect(12,y0,52,32,"F")
+    pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",30)
+    pdf.set_xy(12,y0+3); pdf.cell(52,14,f"{overall}/10",align="C",ln=False)
+    pdf.set_font("Helvetica","",7.5); pdf.set_text_color(180,180,200)
+    pdf.set_xy(12,y0+19); pdf.cell(52,7,"Overall AI Visibility Score",align="C",ln=False)
+    pdf.set_fill_color(*bg_rgb[band]); pdf.rect(66,y0,52,32,"F")
+    pdf.set_text_color(*fg_rgb2[band]); pdf.set_font("Helvetica","B",13)
+    pdf.set_xy(66,y0+7); pdf.cell(52,10,lm[band],align="C",ln=False)
+    pdf.set_font("Helvetica","",7.5); pdf.set_xy(66,y0+19)
+    pdf.cell(52,7,f"Weighted · {len(scores)} dimensions",align="C",ln=False)
+    n_crit=sum(1 for s in scores.values() if score_band(s)=="red")
+    n_good=sum(1 for s in scores.values() if score_band(s)=="green")
+    for i,(val,lbl,col) in enumerate([(n_crit,"Critical",FG_RED_RGB),(n_good,"Passing",FG_GREEN_RGB)]):
+        bx=121+i*40
+        pdf.set_fill_color(248,248,250); pdf.rect(bx,y0,36,32,"F")
+        pdf.set_text_color(*col); pdf.set_font("Helvetica","B",20)
+        pdf.set_xy(bx,y0+4); pdf.cell(36,12,str(val),align="C",ln=False)
+        pdf.set_font("Helvetica","",7); pdf.set_text_color(130,130,140)
+        pdf.set_xy(bx,y0+19); pdf.cell(36,6,lbl,align="C",ln=False)
+    pdf.ln(y0+38-pdf.get_y())
+    pdf.ln(3)
+
+    # Score tiles
+    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,6,"Dimension Scores",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+    tile_w=37; tile_h=17; gap=0.6
+    for i,(dim,s) in enumerate(sorted(scores.items(),key=lambda x:x[1])):
+        bd=score_band(s); col_i=i%5
+        if col_i==0 and i>0: pdf.ln(tile_h+gap)
+        y=pdf.get_y(); x=12+col_i*(tile_w+gap)
+        pdf.set_fill_color(*bg_rgb[bd]); pdf.rect(x,y,tile_w,tile_h,"F")
+        pdf.set_text_color(*fg_rgb2[bd]); pdf.set_font("Helvetica","B",14)
+        pdf.set_xy(x,y+1); pdf.cell(tile_w,7,f"{s}/10",align="C",ln=False)
+        short=dim_short.get(dim,dim[:12])
+        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(80,80,90)
+        pdf.set_xy(x,y+9); pdf.cell(tile_w,4,short,align="C",ln=False)
+    pdf.ln(tile_h+5)
+
+    # Exec summary
+    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,6,"Executive Summary",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+    paras=[p.strip() for p in exec_summary.split("\n\n") if p.strip()][:3]
+    pdf.set_font("Helvetica","",8.5); pdf.set_text_color(40,40,50)
+    for para in paras:
+        pdf.multi_cell(0,4.8,para); pdf.ln(1.5)
+    pdf.ln(2)
+
+    # Priority actions table
+    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,6,"Priority Actions",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.set_text_color(255,255,255)
+    pdf.set_font("Helvetica","B",7.5)
+    pdf.cell(5,5.5,"",fill=True,border=0)
+    pdf.cell(20,5.5,"Severity",fill=True,border=0)
+    pdf.cell(38,5.5,"Dimension",fill=True,border=0)
+    pdf.cell(135,5.5,"Recommendation",fill=True,border=0); pdf.ln()
+    all_recs=[]
+    for d,res in all_results.items():
+        w=DIMENSION_CONFIG.get(d,{}).get("weight",0.05)
+        for iss in res.get("issues",[]):
+            sev=iss.get("severity","info")
+            all_recs.append({"pri":{"critical":1,"warning":2,"info":3}.get(sev,3),"w":w,
+                             "d":d,"rec":iss.get("recommendation",""),"sev":sev})
+    all_recs.sort(key=lambda x:(x["pri"],-x["w"]))
+    sev_col={"critical":FG_RED_RGB,"warning":FG_AMBER_RGB,"info":(21,80,175)}
+    sev_bg_rgb={"critical":(253,233,229),"warning":(255,244,224),"info":(235,240,251)}
+    for rank,rec in enumerate(all_recs[:12],1):
+        sev=rec["sev"]
+        fill=(252,252,254) if rank%2==0 else (248,248,250)
+        pdf.set_fill_color(*fill); pdf.set_text_color(80,80,90)
+        pdf.set_font("Helvetica","B",7.5)
+        pdf.cell(5,5.5,str(rank),fill=True,border=0,align="C")
+        pdf.set_fill_color(*sev_bg_rgb.get(sev,fill))
+        pdf.set_text_color(*sev_col.get(sev,(80,80,80)))
+        pdf.cell(20,5.5,f"  {sev.upper()}",fill=True,border=0)
+        pdf.set_fill_color(*fill); pdf.set_text_color(60,60,70)
+        pdf.set_font("Helvetica","",7.5)
+        pdf.cell(38,5.5,f"  {dim_short.get(rec['d'],rec['d'][:14])}",fill=True,border=0)
+        rec_txt=rec["rec"][:90]+("…" if len(rec["rec"])>90 else "")
+        pdf.cell(135,5.5,f"  {rec_txt}",fill=True,border=0); pdf.ln()
+
+    raw=pdf.output()
+    return bytes(raw) if not isinstance(raw, bytes) else raw
+
+
+# =============================================================================
+# AUDIT RUNNER — returns (scores, all_results, exec_summary, page_data)
+# =============================================================================
+def run_single_audit(client, url, progress_fn=None, status_fn=None):
+    def prog(v): progress_fn(v) if progress_fn else None
+    def stat(t): status_fn(t) if status_fn else None
+
+    stat("📡 Fetching page…"); prog(5)
+    page_data = fetch_page(url)
+    if page_data.get("error"):
+        return None, None, None, page_data
+
+    stat("🤖 Checking robots.txt & llms.txt…"); prog(10)
+    page_data["robots_data"] = check_robots(url)
+    page_data["llms_txt"]    = check_llms_txt(url)
+
+    scores, all_results = {}, {}
+    dims = list(DIMENSION_CONFIG.keys())
+    for i, dim in enumerate(dims):
+        stat(f"🔍 Analysing: {dim}…"); prog(15 + int(68 * i / len(dims)))
+        res = analyse_dimension(client, page_data, dim)
+        scores[dim] = res.get("score", 0)
+        all_results[dim] = res
+        time.sleep(0.2)
+
+    stat("✍️ Generating executive summary…"); prog(88)
+    exec_summary = gen_exec_summary(client, url, scores, all_results)
+    prog(100)
+    return scores, all_results, exec_summary, page_data
+
+
+# =============================================================================
+# DASHBOARD RENDERER — for a single audit result
+# =============================================================================
+def render_dashboard(url, scores, all_results, exec_summary, page_data,
+                     logo_bytes, logo_b64_str, tab_key=""):
+    overall = weighted_overall(scores)
+    band    = score_band(overall)
+    bg_map  = {"red":BG_RED,"amber":BG_AMBER,"green":BG_GREEN}
+    fg_map  = {"red":FG_RED,"amber":FG_AMBER,"green":FG_GREEN}
+    lbl_map = {"red":"Needs Attention","amber":"Developing","green":"Good"}
+
+    # Hero row
+    c1,c2,c3,c4 = st.columns([1.6,1.4,1,1])
+    with c1:
+        st.markdown(f"""
+        <div class="score-hero">
+            <div class="lbl">Overall AI Visibility Score</div>
+            <div><span class="num">{overall}</span><span class="denom"> /10</span></div>
+            <div style="margin-top:8px;background:rgba(255,255,255,0.12);border-radius:7px;
+                        padding:5px 16px;display:inline-block;font-weight:700;font-size:0.96rem">
+                {lbl_map[band]}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.plotly_chart(gauge_chart(overall), use_container_width=True, config={"displayModeBar":False})
+    with c3:
+        n_crit=sum(1 for r in all_results.values() for iss in r.get("issues",[]) if iss.get("severity")=="critical")
+        n_warn=sum(1 for r in all_results.values() for iss in r.get("issues",[]) if iss.get("severity")=="warning")
+        st.markdown(f"""
+        <div class="mcard red" style="text-align:center"><div class="mnum">{n_crit}</div><div class="mlbl">Critical Issues</div></div>
+        <div class="mcard amber" style="text-align:center"><div class="mnum">{n_warn}</div><div class="mlbl">Warnings</div></div>
+        """, unsafe_allow_html=True)
+    with c4:
+        n_pass=sum(1 for s in scores.values() if s>6.5)
+        lt=page_data.get("load_time","—")
+        st.markdown(f"""
+        <div class="mcard green" style="text-align:center"><div class="mnum">{n_pass}</div><div class="mlbl">Passing</div></div>
+        <div class="mcard grey" style="text-align:center"><div class="mnum">{lt}s</div><div class="mlbl">Load Time</div></div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    t1,t2,t3,t4,t5 = st.tabs(["📊 Scores","🕸️ Radar","⚖️ Weighting","📋 Issues","📝 Summary"])
+
+    with t1:
+        ba,bb=st.columns([2,1])
+        with ba:
+            st.markdown("#### Score by Dimension")
+            st.plotly_chart(bar_chart(scores), use_container_width=True, config={"displayModeBar":False})
+        with bb:
+            st.markdown("#### Breakdown")
+            rows=""
+            for d,s in sorted(scores.items(),key=lambda x:x[1]):
+                bc=score_band(s); ic=DIMENSION_CONFIG.get(d,{}).get("icon","•")
+                rows+=f'<tr><td>{ic} {d}</td><td style="text-align:right"><span class="badge-{bc}">{s}/10</span></td></tr>'
+            st.markdown(f'<table class="at"><thead><tr><th>Dimension</th><th>Score</th></tr></thead><tbody>{rows}</tbody></table>',unsafe_allow_html=True)
+
+    with t2:
+        st.plotly_chart(radar_chart(scores), use_container_width=True, config={"displayModeBar":False})
+
+    with t3:
+        wa,wb=st.columns(2)
+        with wa:
+            st.plotly_chart(weight_donut(scores), use_container_width=True, config={"displayModeBar":False})
+        with wb:
+            rows=""
+            for d,cfg in DIMENSION_CONFIG.items():
+                s=scores.get(d,0); bc=score_band(s); ws=round(s*cfg["weight"],2)
+                rows+=f'<tr><td>{cfg["icon"]} {d}</td><td style="text-align:center">{int(cfg["weight"]*100)}%</td><td style="text-align:center"><span class="badge-{bc}">{s}/10</span></td><td style="text-align:center;font-weight:600;color:{S_CHARCOAL}">{ws}</td></tr>'
+            st.markdown(f'<table class="at"><thead><tr><th>Dimension</th><th>Weight</th><th>Score</th><th>Weighted</th></tr></thead><tbody>{rows}</tbody></table>',unsafe_allow_html=True)
+
+    with t4:
+        sf=st.selectbox("Filter",["All","Critical","Warning","Info"],key=f"sf_{tab_key}")
+        flat=sorted([{"sev":i.get("severity","info"),"dim":d,**i} for d,r in all_results.items() for i in r.get("issues",[])],
+                    key=lambda x:{"critical":0,"warning":1,"info":2}.get(x["sev"],3))
+        shown=0
+        for iss in flat:
+            if sf!="All" and iss["sev"].lower()!=sf.lower(): continue
+            shown+=1
+            ic={"critical":"🔴","warning":"🟡","info":"🔵"}.get(iss["sev"],"⚪")
+            st.markdown(f"""
+            <div class="irow {iss['sev']}">
+                <div style="min-width:22px">{ic}</div>
+                <div style="flex:1">
+                    <div><span class="ititle">{iss.get('issue','')}</span><span class="idim">{iss['dim']}</span></div>
+                    <div class="irec">💡 {iss.get('recommendation','')}</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+        if shown==0: st.info("No issues for this filter.")
+
+    with t5:
+        st.markdown(f"""
+        <div style="background:{S_WHITE};border-radius:11px;padding:24px;box-shadow:0 2px 7px rgba(0,0,0,0.07);
+        color:{S_INK};line-height:1.7;font-size:0.92rem">{exec_summary.replace(chr(10),"<br>")}</div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### 🔎 Findings by Dimension")
+    for d,res in all_results.items():
+        s=scores.get(d,0); bd=score_band(s); ic=DIMENSION_CONFIG.get(d,{}).get("icon","•")
+        with st.expander(f"{ic} {d}  —  {s}/10", expanded=(s<=3)):
+            da,db=st.columns([1,2])
+            with da:
+                st.markdown(f"""
+                <div style="text-align:center;padding:16px;background:{bg_map[bd]};border-radius:9px;border:1px solid {S_LIGHT}">
+                    <div style="font-size:2.6rem;font-weight:800;color:{fg_map[bd]}">{s}</div>
+                    <div style="color:{fg_map[bd]};font-size:0.74rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">/10 — {lbl_map[bd]}</div>
+                </div>
+                <p style="text-align:center;color:{S_CAPTION};font-size:0.76rem;margin-top:6px">Weight: {int(DIMENSION_CONFIG.get(d,{}).get('weight',0.05)*100)}%</p>
+                """, unsafe_allow_html=True)
+            with db:
+                if res.get("summary"): st.markdown(f"**{res['summary']}**")
+                for ft in res.get("findings",[]): st.markdown(f"- {ft}")
+            issues=res.get("issues",[])
+            if issues:
+                st.markdown("**Issues**")
+                for iss in issues:
+                    sev=iss.get("severity","info")
+                    ic2={"critical":"🔴","warning":"🟡","info":"🔵"}.get(sev,"⚪")
+                    st.markdown(f"{ic2} **{iss.get('issue','')}**")
+                    st.caption(f"Recommendation: {iss.get('recommendation','')}")
+            pos=res.get("positive",[])
+            if pos:
+                st.markdown("**Strengths**")
+                for p in pos: st.markdown(f"✅ {p}")
+
+    # Exports — stored in session_state to survive downloads
+    sk = tab_key or "single"
+    st.markdown("---")
+    st.markdown("### 📥 Export Reports")
+    e1,e2,e3=st.columns(3)
+    domain=urlparse(url).netloc.replace("www.",""); stamp=datetime.now().strftime("%Y%m")
+
+    # Pre-build exports into session_state so downloads don't trigger full re-run
+    docx_key=f"docx_{sk}"; pdf_key=f"pdf_{sk}"; json_key=f"json_{sk}"
+    if docx_key not in st.session_state:
+        with st.spinner("Building .docx…"):
+            st.session_state[docx_key] = build_docx(url,scores,all_results,exec_summary,logo_bytes)
+    if pdf_key not in st.session_state:
+        with st.spinner("Building PDF…"):
+            st.session_state[pdf_key] = build_pdf_with_issues(url,scores,all_results,exec_summary,logo_bytes)
+    if json_key not in st.session_state:
+        export={"url":url,"audit_date":datetime.now().isoformat(),"overall_score":overall,
+                "scores":scores,"results":{k:{kk:vv for kk,vv in v.items() if kk!="soup"} for k,v in all_results.items()},
+                "executive_summary":exec_summary}
+        st.session_state[json_key] = json.dumps(export,indent=2,default=str)
+
+    with e1:
+        st.markdown(f"""<div style="background:{S_WHITE};border-radius:9px;padding:16px;box-shadow:0 2px 6px rgba(0,0,0,0.06);border-top:4px solid {S_CHARCOAL}">
+            <h4 style="color:{S_CHARCOAL};margin-top:0">📄 Word Report</h4>
+            <p style="color:{S_MUTED};font-size:0.81rem">Full Summit-branded report with findings and recommendations.</p></div>""",unsafe_allow_html=True)
+        st.download_button("⬇️ Download .docx", st.session_state[docx_key],
+            file_name=f"summit_ai_audit_{domain}_{stamp}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True, key=f"dl_docx_{sk}")
+
+    with e2:
+        st.markdown(f"""<div style="background:{S_WHITE};border-radius:9px;padding:16px;box-shadow:0 2px 6px rgba(0,0,0,0.06);border-top:4px solid {S_RED}">
+            <h4 style="color:{S_RED};margin-top:0">📋 PDF One-Pager</h4>
+            <p style="color:{S_MUTED};font-size:0.81rem">Visual dashboard summary — score tiles, priority actions, exec summary.</p></div>""",unsafe_allow_html=True)
+        st.download_button("⬇️ Download PDF", st.session_state[pdf_key],
+            file_name=f"summit_ai_audit_{domain}_{stamp}.pdf",
+            mime="application/pdf",
+            use_container_width=True, key=f"dl_pdf_{sk}")
+
+    with e3:
+        st.markdown(f"""<div style="background:{S_WHITE};border-radius:9px;padding:16px;box-shadow:0 2px 6px rgba(0,0,0,0.06);border-top:4px solid {FG_GREEN}">
+            <h4 style="color:{FG_GREEN};margin-top:0">📊 JSON Data</h4>
+            <p style="color:{S_MUTED};font-size:0.81rem">Raw audit data for integration with other tools or CRMs.</p></div>""",unsafe_allow_html=True)
+        st.download_button("⬇️ Download JSON", st.session_state[json_key],
+            file_name=f"summit_ai_audit_{domain}_{stamp}.json",
+            mime="application/json",
+            use_container_width=True, key=f"dl_json_{sk}")
 
 
 # =============================================================================
@@ -915,400 +1164,198 @@ def build_pdf(url: str, scores: dict, exec_summary: str, logo_bytes: bytes) -> b
 # =============================================================================
 def main():
     inject_css()
-
-    # Load real Summit logo
-    logo_bytes = load_logo_bytes()
+    logo_bytes   = load_logo_bytes()
     logo_b64_str = logo_b64(logo_bytes)
 
-    # — Sidebar —
+    # Session state init
+    if "audit_results" not in st.session_state:
+        st.session_state.audit_results = {}   # url -> {scores, all_results, exec_summary, page_data}
+
+    # ── Sidebar ──────────────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown(
-            f'<img src="data:image/png;base64,{logo_b64_str}" '
-            f'width="100" style="margin-bottom:20px;display:block">',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<img src="data:image/png;base64,{logo_b64_str}" width="90" style="margin-bottom:18px;display:block">',
+                    unsafe_allow_html=True)
         st.markdown("## AI Visibility Audit")
         st.markdown("---")
 
-        # API key: prefer Streamlit secrets, fall back to text input
-        api_key = ""
+        # API key
+        api_key=""
         try:
-            api_key = st.secrets["GEMINI_API_KEY"]
-            st.success("✅ API key loaded from secrets", icon=None)
+            api_key=st.secrets["GEMINI_API_KEY"]
+            st.success("✅ API key loaded from secrets")
         except Exception:
-            api_key = st.text_input(
-                "Gemini API Key",
-                type="password",
-                help="Or add GEMINI_API_KEY to .streamlit/secrets.toml"
-            )
+            api_key=st.text_input("Gemini API Key",type="password",
+                                  help="Or add GEMINI_API_KEY to .streamlit/secrets.toml")
+        st.markdown("---")
 
-        url_input = st.text_input(
-            "URL to Audit",
-            placeholder="https://example.com",
-            help="Full URL including https://"
-        )
+        # URL input mode toggle
+        mode=st.radio("Audit mode",["Single URL","Multiple URLs"],horizontal=True)
+
+        if mode=="Single URL":
+            url_single=st.text_input("URL to Audit",placeholder="https://example.com")
+            urls_to_audit=[url_single] if url_single.strip() else []
+        else:
+            url_text=st.text_area("URLs to Audit (one per line)",
+                                   placeholder="https://example.com\nhttps://example.com/category",
+                                   height=110,
+                                   help="Enter up to 5 URLs, one per line")
+            urls_to_audit=[u.strip() for u in url_text.strip().splitlines() if u.strip()][:5]
+            if len(urls_to_audit)>0:
+                st.caption(f"{len(urls_to_audit)} URL{'s' if len(urls_to_audit)!=1 else ''} queued")
 
         st.markdown("---")
-        st.markdown("**Top dimensions by weight**")
-        for dim, cfg in list(DIMENSION_CONFIG.items())[:5]:
-            st.caption(f"{cfg['icon']} {dim}: {int(cfg['weight']*100)}%")
+        run_btn=st.button("🚀 Run Audit", use_container_width=True)
+        if st.button("🗑️ Clear Results", use_container_width=True):
+            st.session_state.audit_results={}
+            # Clear cached exports
+            for k in list(st.session_state.keys()):
+                if k.startswith(("docx_","pdf_","json_")): del st.session_state[k]
+            st.rerun()
 
         st.markdown("---")
-        run_audit = st.button("🚀 Run Audit", use_container_width=True)
-
-        st.markdown("---")
-        st.caption("Summit AI Visibility Audit v2")
+        st.caption("Summit AI Visibility Audit v2.1")
         st.caption("Powered by Gemini 2.5 Flash")
         st.caption("© Summit Performance Marketing")
 
-    # — Header —
-    hcol1, hcol2 = st.columns([3, 1])
-    with hcol1:
+    # ── Header ───────────────────────────────────────────────────────────
+    hc1,hc2=st.columns([3,1])
+    with hc1:
         st.markdown(
-            f'<div style="display:flex;align-items:center;gap:16px;margin-bottom:6px">'
-            f'<img src="data:image/png;base64,{logo_b64_str}" width="64" style="border-radius:8px">'
-            f'<div>'
-            f'<h1 style="margin:0;color:{S_CHARCOAL};font-size:1.75rem;font-weight:800">AI Visibility Audit Dashboard</h1>'
-            f'<p style="margin:0;color:{S_MUTED};font-size:0.88rem">Technical audit for AI crawler access &amp; content extraction quality</p>'
-            f'</div></div>',
-            unsafe_allow_html=True
-        )
-    with hcol2:
-        st.markdown(
-            f'<p style="text-align:right;color:{S_CAPTION};margin-top:22px;font-size:0.82rem">'
-            f'{datetime.now().strftime("%d %b %Y")}</p>',
-            unsafe_allow_html=True
-        )
+            f'<div style="display:flex;align-items:center;gap:14px;margin-bottom:4px">'
+            f'<img src="data:image/png;base64,{logo_b64_str}" width="58" style="border-radius:6px">'
+            f'<div><h1 style="margin:0;color:{S_CHARCOAL};font-size:1.7rem;font-weight:800">AI Visibility Audit</h1>'
+            f'<p style="margin:0;color:{S_MUTED};font-size:0.86rem">Technical audit for AI crawler access &amp; content extraction quality</p>'
+            f'</div></div>', unsafe_allow_html=True)
+    with hc2:
+        st.markdown(f'<p style="text-align:right;color:{S_CAPTION};margin-top:20px;font-size:0.8rem">{datetime.now().strftime("%d %b %Y")}</p>',unsafe_allow_html=True)
     st.markdown("---")
 
-    # — Landing state —
-    if not run_audit:
+    # ── Run audit if button pressed ───────────────────────────────────────
+    if run_btn:
+        if not api_key:
+            st.error("Please enter your Gemini API key."); return
+        if not urls_to_audit:
+            st.error("Please enter at least one URL."); return
+
+        try:
+            client=genai.Client(api_key=api_key)
+        except Exception as e:
+            st.error(f"Gemini API error: {e}"); return
+
+        for url_raw in urls_to_audit:
+            url=url_raw if url_raw.startswith(("http://","https://")) else "https://"+url_raw
+            st.markdown(f"#### Auditing `{url}`")
+            prog=st.progress(0); stat=st.empty()
+
+            scores,all_results,exec_summary,page_data = run_single_audit(
+                client, url,
+                progress_fn=prog.progress,
+                status_fn=stat.text
+            )
+            prog.empty(); stat.empty()
+
+            if scores is None:
+                st.error(f"Failed to fetch {url}: {page_data.get('error','')}"); continue
+
+            # Cache in session state
+            st.session_state.audit_results[url] = {
+                "scores":scores,"all_results":all_results,
+                "exec_summary":exec_summary,"page_data":page_data,
+            }
+            # Clear any stale exports for this URL
+            slug=url.replace("https://","").replace("http://","").replace("/","_")[:40]
+            for k in list(st.session_state.keys()):
+                if k.endswith(slug): del st.session_state[k]
+
+        st.rerun()
+
+    # ── Render results ────────────────────────────────────────────────────
+    results = st.session_state.audit_results
+
+    if not results:
+        # Landing
         st.markdown(f"""
-        <div style="background:{S_WHITE};border-radius:12px;padding:36px;text-align:center;
-        box-shadow:0 2px 8px rgba(0,0,0,0.07);margin-bottom:28px">
+        <div style="background:{S_WHITE};border-radius:12px;padding:34px;text-align:center;
+        box-shadow:0 2px 8px rgba(0,0,0,0.07);margin-bottom:26px">
             <h2 style="color:{S_CHARCOAL};margin-top:0">Enter a URL in the sidebar to begin</h2>
-            <p style="color:{S_MUTED};max-width:480px;margin:12px auto 0">
-            Audits 10 dimensions weighted by AI search impact. Generates a Semrush-style
-            dashboard plus branded Word and PDF exports.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
+            <p style="color:{S_MUTED};max-width:460px;margin:10px auto 0">Audits 10 AI visibility dimensions weighted by
+            impact. Generates a visual dashboard plus branded Word and PDF exports.</p>
+        </div>""", unsafe_allow_html=True)
         st.markdown("### Audit Dimensions")
-        cols = st.columns(2)
-        for i, (dim, cfg) in enumerate(DIMENSION_CONFIG.items()):
-            with cols[i % 2]:
+        cols=st.columns(2)
+        for i,(d,cfg) in enumerate(DIMENSION_CONFIG.items()):
+            with cols[i%2]:
                 st.markdown(f"""
-                <div style="background:{S_WHITE};border-radius:8px;padding:13px 16px;
-                margin-bottom:9px;box-shadow:0 1px 4px rgba(0,0,0,0.05);
-                border-left:4px solid {cfg['color']}">
+                <div style="background:{S_WHITE};border-radius:8px;padding:12px 15px;margin-bottom:8px;
+                box-shadow:0 1px 4px rgba(0,0,0,0.05);border-left:4px solid {cfg['color']}">
                     <div style="display:flex;justify-content:space-between;align-items:center">
-                        <span style="font-weight:600;font-size:0.9rem;color:{S_CHARCOAL}">{cfg['icon']} {dim}</span>
-                        <span style="background:{S_OFFWHITE};color:{S_CHARCOAL};padding:2px 8px;
-                        border-radius:10px;font-size:0.76rem;font-weight:700">{int(cfg['weight']*100)}%</span>
+                        <span style="font-weight:600;font-size:0.88rem;color:{S_CHARCOAL}">{cfg['icon']} {d}</span>
+                        <span style="background:{S_OFFWHITE};color:{S_CHARCOAL};padding:1px 7px;border-radius:9px;font-size:0.74rem;font-weight:700">{int(cfg['weight']*100)}%</span>
                     </div>
-                    <p style="margin:4px 0 0;color:{S_MUTED};font-size:0.8rem">{cfg['description']}</p>
-                </div>
-                """, unsafe_allow_html=True)
+                    <p style="margin:3px 0 0;color:{S_MUTED};font-size:0.78rem">{cfg['description']}</p>
+                </div>""", unsafe_allow_html=True)
         return
 
-    # — Validation —
-    if not api_key:
-        st.error("Please enter your Gemini API key in the sidebar (or add it to .streamlit/secrets.toml).")
+    # Single result — clean single view
+    if len(results)==1:
+        url,data = list(results.items())[0]
+        slug=url.replace("https://","").replace("http://","").replace("/","_")[:40]
+        render_dashboard(url,data["scores"],data["all_results"],data["exec_summary"],
+                         data["page_data"],logo_bytes,logo_b64_str,tab_key=slug)
         return
-    if not url_input:
-        st.error("Please enter a URL to audit.")
-        return
 
-    url = url_input.strip()
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    # Multiple results — tabbed by URL + comparison view
+    urls=list(results.keys())
+    short_labels={u: urlparse(u).netloc.replace("www.","")+urlparse(u).path[:24] for u in urls}
+    tab_labels=["📊 Compare"]+[f"🔗 {short_labels[u]}" for u in urls]
+    tabs=st.tabs(tab_labels)
 
-    # — Run audit —
-    st.markdown(f"### Auditing `{url}`")
-    prog  = st.progress(0)
-    stat  = st.empty()
-
-    try:
-        client = genai.Client(api_key=api_key)
-    except Exception as e:
-        st.error(f"Gemini API error: {e}"); return
-
-    stat.text("📡 Fetching page...")
-    prog.progress(5)
-    page_data = fetch_page(url)
-    if page_data.get("error"):
-        st.error(f"Failed to fetch page: {page_data['error']}"); return
-
-    stat.text("🤖 Checking robots.txt and llms.txt...")
-    prog.progress(10)
-    page_data["robots_data"] = check_robots(url)
-    page_data["llms_txt"]    = check_llms_txt(url)
-
-    scores, all_results = {}, {}
-    dims = list(DIMENSION_CONFIG.keys())
-    for i, dim in enumerate(dims):
-        stat.text(f"🔍 Analysing: {dim}...")
-        prog.progress(15 + int(68 * i / len(dims)))
-        res = analyse_dimension(client, page_data, dim)
-        scores[dim]       = res.get("score", 0)
-        all_results[dim]  = res
-        time.sleep(0.25)
-
-    stat.text("✍️ Generating executive summary...")
-    prog.progress(88)
-    exec_summary = gen_exec_summary(client, url, scores, all_results)
-
-    prog.progress(100); time.sleep(0.4)
-    stat.empty(); prog.empty()
-
-    overall = weighted_overall(scores)
-    band    = score_band(overall)
-    bg_map  = {"red": BG_RED, "amber": BG_AMBER, "green": BG_GREEN}
-    fg_map  = {"red": FG_RED, "amber": FG_AMBER, "green": FG_GREEN}
-    lbl_map = {"red": "Needs Attention", "amber": "Developing", "green": "Good"}
-
-    # ── Dashboard ──────────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns([1.6, 1.4, 1, 1])
-
-    with c1:
-        st.markdown(f"""
-        <div class="score-hero">
-            <div class="lbl">Overall AI Visibility Score</div>
-            <div>
-                <span class="number">{overall}</span>
-                <span class="denom"> /10</span>
-            </div>
-            <div style="margin-top:10px;background:rgba(255,255,255,0.12);border-radius:8px;
-                        padding:6px 18px;display:inline-block;font-weight:700;font-size:1rem">
-                {lbl_map[band]}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with c2:
-        st.plotly_chart(gauge_chart(overall), use_container_width=True,
-                        config={"displayModeBar": False})
-
-    with c3:
-        n_crit = sum(1 for r in all_results.values()
-                     for iss in r.get("issues",[]) if iss.get("severity")=="critical")
-        n_warn = sum(1 for r in all_results.values()
-                     for iss in r.get("issues",[]) if iss.get("severity")=="warning")
-        st.markdown(f"""
-        <div class="metric-card red" style="text-align:center">
-            <div class="metric-number" style="color:{FG_RED}">{n_crit}</div>
-            <div class="metric-label">Critical Issues</div>
-        </div>
-        <div class="metric-card amber" style="text-align:center">
-            <div class="metric-number" style="color:{FG_AMBER}">{n_warn}</div>
-            <div class="metric-label">Warnings</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with c4:
-        n_pass = sum(1 for s in scores.values() if s > 6.5)
-        lt     = page_data.get("load_time","—")
-        st.markdown(f"""
-        <div class="metric-card green" style="text-align:center">
-            <div class="metric-number" style="color:{FG_GREEN}">{n_pass}</div>
-            <div class="metric-label">Dimensions Passing</div>
-        </div>
-        <div class="metric-card" style="text-align:center">
-            <div class="metric-number" style="color:{S_CHARCOAL}">{lt}s</div>
-            <div class="metric-label">Page Load Time</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["📊 Scores", "🕸️ Radar", "⚖️ Weighting", "📋 Issues", "📝 Summary"])
-
-    with tab1:
-        ba, bb = st.columns([2, 1])
-        with ba:
-            st.markdown("#### Score by Dimension")
-            st.plotly_chart(bar_chart(scores), use_container_width=True,
-                            config={"displayModeBar": False})
-        with bb:
-            st.markdown("#### Breakdown")
-            rows = ""
-            for dim, s in sorted(scores.items(), key=lambda x: x[1]):
-                bc = score_band(s); icon = DIMENSION_CONFIG.get(dim,{}).get("icon","•")
-                rows += f"""<tr>
-                    <td>{icon} {dim}</td>
-                    <td style="text-align:right"><span class="badge-{bc}">{s}/10</span></td>
-                </tr>"""
-            st.markdown(f'<table class="audit-table"><thead><tr>'
-                        f'<th>Dimension</th><th>Score</th></tr></thead>'
-                        f'<tbody>{rows}</tbody></table>', unsafe_allow_html=True)
-
-    with tab2:
-        st.markdown("#### AI Visibility Radar Profile")
-        st.plotly_chart(radar_chart(scores), use_container_width=True,
-                        config={"displayModeBar": False})
-
-    with tab3:
-        wa, wb = st.columns(2)
-        with wa:
-            st.markdown("#### Dimension Weighting")
-            st.plotly_chart(weight_donut(scores), use_container_width=True,
-                            config={"displayModeBar": False})
-        with wb:
-            st.markdown("#### Weight & Score Table")
-            rows = ""
-            for dim, cfg in DIMENSION_CONFIG.items():
-                s = scores.get(dim, 0); bc = score_band(s)
-                ws = round(s * cfg["weight"], 2)
-                rows += f"""<tr>
-                    <td>{cfg['icon']} {dim}</td>
-                    <td style="text-align:center">{int(cfg['weight']*100)}%</td>
-                    <td style="text-align:center"><span class="badge-{bc}">{s}/10</span></td>
-                    <td style="text-align:center;font-weight:600;color:{S_CHARCOAL}">{ws}</td>
-                </tr>"""
-            st.markdown(f'<table class="audit-table"><thead><tr>'
-                        f'<th>Dimension</th><th>Weight</th><th>Score</th><th>Weighted</th>'
-                        f'</tr></thead><tbody>{rows}</tbody></table>',
-                        unsafe_allow_html=True)
-
-    with tab4:
-        st.markdown("#### Issues")
-        sev_filter = st.selectbox("Filter by severity", ["All","Critical","Warning","Info"])
-        flat_issues = sorted(
-            [{"sev": i.get("severity","info"), "dim": d, **i}
-             for d, r in all_results.items() for i in r.get("issues",[])],
-            key=lambda x: {"critical":0,"warning":1,"info":2}.get(x["sev"],3)
-        )
-        shown = 0
-        for iss in flat_issues:
-            if sev_filter != "All" and iss["sev"].lower() != sev_filter.lower():
-                continue
-            shown += 1
-            icons = {"critical":"🔴","warning":"🟡","info":"🔵"}
-            icon  = icons.get(iss["sev"],"⚪")
-            st.markdown(f"""
-            <div class="issue-row {iss['sev']}">
-                <div style="min-width:24px;font-size:1rem">{icon}</div>
-                <div style="flex:1">
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-                        <span style="font-weight:600;font-size:0.87rem;color:{S_INK}">{iss.get('issue','')}</span>
-                        <span style="background:{S_LIGHT};color:{S_MUTED};padding:1px 7px;
-                              border-radius:10px;font-size:0.74rem">{iss['dim']}</span>
-                    </div>
-                    <p style="margin:0;color:{S_MUTED};font-size:0.82rem">
-                        💡 {iss.get('recommendation','')}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        if shown == 0:
-            st.info("No issues found for this filter.")
-
-    with tab5:
-        st.markdown("#### Executive Summary")
-        st.markdown(f"""
-        <div style="background:{S_WHITE};border-radius:12px;padding:26px;
-        box-shadow:0 2px 8px rgba(0,0,0,0.07);color:{S_INK};line-height:1.65;font-size:0.93rem">
-            {exec_summary.replace(chr(10), "<br>")}
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Detailed accordion
-    st.markdown("### 🔎 Findings by Dimension")
-    for dim, result in all_results.items():
-        s    = scores.get(dim, 0); bd = score_band(s)
-        icon = DIMENSION_CONFIG.get(dim,{}).get("icon","•")
-        with st.expander(f"{icon} {dim}  —  {s}/10", expanded=(s <= 3)):
-            da, db = st.columns([1, 2])
-            with da:
+    with tabs[0]:
+        st.markdown("### Side-by-side Comparison")
+        # Overall scores row
+        score_cols=st.columns(len(urls))
+        for i,url in enumerate(urls):
+            s=results[url]["scores"]; ov=weighted_overall(s); bd=score_band(ov)
+            bg={"red":BG_RED,"amber":BG_AMBER,"green":BG_GREEN}[bd]
+            fg={"red":FG_RED,"amber":FG_AMBER,"green":FG_GREEN}[bd]
+            with score_cols[i]:
                 st.markdown(f"""
-                <div style="text-align:center;padding:18px;background:{bg_map[bd]};
-                border-radius:10px;border:1px solid {S_LIGHT}">
-                    <div style="font-size:2.8rem;font-weight:800;color:{fg_map[bd]}">{s}</div>
-                    <div style="color:{fg_map[bd]};font-size:0.76rem;font-weight:600;
-                    text-transform:uppercase;letter-spacing:0.05em">/10 — {lbl_map[bd]}</div>
-                </div>
-                <p style="text-align:center;color:{S_CAPTION};font-size:0.78rem;margin-top:8px">
-                Weight: {int(DIMENSION_CONFIG.get(dim,{}).get('weight',0.05)*100)}%</p>
-                """, unsafe_allow_html=True)
-            with db:
-                if result.get("summary"):
-                    st.markdown(f"**{result['summary']}**")
-                for f_txt in result.get("findings", []):
-                    st.markdown(f"- {f_txt}")
-            issues = result.get("issues", [])
-            if issues:
-                st.markdown("**Issues**")
-                for iss in issues:
-                    sev = iss.get("severity","info")
-                    ico = {"critical":"🔴","warning":"🟡","info":"🔵"}.get(sev,"⚪")
-                    st.markdown(f"{ico} **{iss.get('issue','')}**")
-                    st.caption(f"Recommendation: {iss.get('recommendation','')}")
-            positives = result.get("positive",[])
-            if positives:
-                st.markdown("**Strengths**")
-                for p in positives:
-                    st.markdown(f"✅ {p}")
+                <div style="background:{bg};border-radius:10px;padding:14px;text-align:center;border-top:4px solid {fg}">
+                    <div style="font-size:0.72rem;font-weight:600;color:{S_MUTED};text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                         title="{url}">{short_labels[url]}</div>
+                    <div style="font-size:2.4rem;font-weight:800;color:{fg};line-height:1">{ov}</div>
+                    <div style="font-size:0.75rem;color:{fg}">/10</div>
+                </div>""", unsafe_allow_html=True)
 
-    st.markdown("---")
+        st.markdown("---")
+        cc1,cc2=st.columns(2)
+        with cc1:
+            st.markdown("#### Radar Comparison")
+            scores_map={short_labels[u]:results[u]["scores"] for u in urls}
+            st.plotly_chart(multi_radar_chart(scores_map),use_container_width=True,config={"displayModeBar":False})
+        with cc2:
+            st.markdown("#### Score Comparison")
+            st.plotly_chart(multi_bar_chart(scores_map),use_container_width=True,config={"displayModeBar":False})
 
-    # ── Exports ────────────────────────────────────────────────────────────
-    st.markdown("### 📥 Export Reports")
-    e1, e2, e3 = st.columns(3)
+        st.markdown("#### Dimension Comparison Table")
+        dims=list(DIMENSION_CONFIG.keys())
+        hdr="<tr><th>Dimension</th>"+"".join(f"<th>{short_labels[u]}</th>" for u in urls)+"</tr>"
+        body=""
+        for d in dims:
+            row=f"<tr><td>{DIMENSION_CONFIG[d]['icon']} {d}</td>"
+            for u in urls:
+                s=results[u]["scores"].get(d,0); bc=score_band(s)
+                row+=f'<td style="text-align:center"><span class="badge-{bc}">{s}/10</span></td>'
+            body+=row+"</tr>"
+        st.markdown(f'<table class="at"><thead>{hdr}</thead><tbody>{body}</tbody></table>',unsafe_allow_html=True)
 
-    domain = urlparse(url).netloc.replace("www.","")
-    stamp  = datetime.now().strftime("%Y%m")
-
-    with e1:
-        st.markdown(f"""
-        <div style="background:{S_WHITE};border-radius:10px;padding:18px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.07);border-top:4px solid {S_CHARCOAL}">
-            <h4 style="color:{S_CHARCOAL};margin-top:0">📄 Word Document</h4>
-            <p style="color:{S_MUTED};font-size:0.83rem">Full Summit-branded audit report. Includes executive summary, dimension scores, detailed findings and priority recommendations.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        with st.spinner("Building .docx..."):
-            docx_bytes = build_docx(url, scores, all_results, exec_summary, logo_bytes)
-        st.download_button("⬇️ Download Word Report", docx_bytes,
-                           file_name=f"summit_ai_audit_{domain}_{stamp}.docx",
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                           use_container_width=True)
-
-    with e2:
-        st.markdown(f"""
-        <div style="background:{S_WHITE};border-radius:10px;padding:18px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.07);border-top:4px solid {S_RED}">
-            <h4 style="color:{S_RED};margin-top:0">📋 PDF Summary</h4>
-            <p style="color:{S_MUTED};font-size:0.83rem">Dashboard summary as PDF. Includes overall score, dimension breakdown and executive summary. Ideal for client presentations.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        with st.spinner("Building PDF..."):
-            pdf_bytes = build_pdf(url, scores, exec_summary, logo_bytes)
-        st.download_button("⬇️ Download PDF", pdf_bytes,
-                           file_name=f"summit_ai_audit_{domain}_{stamp}.pdf",
-                           mime="application/pdf",
-                           use_container_width=True)
-
-    with e3:
-        st.markdown(f"""
-        <div style="background:{S_WHITE};border-radius:10px;padding:18px;
-        box-shadow:0 2px 6px rgba(0,0,0,0.07);border-top:4px solid {FG_GREEN}">
-            <h4 style="color:{FG_GREEN};margin-top:0">📊 JSON Data</h4>
-            <p style="color:{S_MUTED};font-size:0.83rem">Raw audit data including all scores, findings and analysis output. Useful for integration with other reporting tools or CRMs.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        export = {"url": url, "audit_date": datetime.now().isoformat(),
-                  "overall_score": overall, "scores": scores,
-                  "results": {k: {kk:vv for kk,vv in v.items() if kk!="soup"}
-                               for k,v in all_results.items()},
-                  "executive_summary": exec_summary}
-        st.download_button("⬇️ Download JSON", json.dumps(export, indent=2, default=str),
-                           file_name=f"summit_ai_audit_{domain}_{stamp}.json",
-                           mime="application/json",
-                           use_container_width=True)
+    for i,url in enumerate(urls):
+        with tabs[i+1]:
+            data=results[url]
+            slug=url.replace("https://","").replace("http://","").replace("/","_")[:40]
+            render_dashboard(url,data["scores"],data["all_results"],data["exec_summary"],
+                             data["page_data"],logo_bytes,logo_b64_str,tab_key=slug)
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
