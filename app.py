@@ -100,17 +100,30 @@ def inject_css():
     [data-testid="stSidebar"] h1,
     [data-testid="stSidebar"] h2,
     [data-testid="stSidebar"] h3 {{ color:#FFFFFF !important; }}
-    /* Text inputs */
+    /* Text inputs — broad selectors to survive Streamlit version changes */
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
     [data-testid="stSidebar"] .stTextInput input,
-    [data-testid="stSidebar"] .stTextArea textarea {{
-        background:rgba(255,255,255,0.08) !important;
+    [data-testid="stSidebar"] .stTextArea textarea,
+    [data-testid="stSidebar"] [data-baseweb="input"] input,
+    [data-testid="stSidebar"] [data-baseweb="textarea"] textarea {{
+        background:rgba(255,255,255,0.10) !important;
         color:#FFFFFF !important;
-        border:1px solid rgba(255,255,255,0.22) !important;
-        border-radius:6px;
+        border:1px solid rgba(255,255,255,0.28) !important;
+        border-radius:6px !important;
+        caret-color:#FFFFFF !important;
     }}
+    [data-testid="stSidebar"] input::placeholder,
+    [data-testid="stSidebar"] textarea::placeholder,
     [data-testid="stSidebar"] .stTextInput input::placeholder,
     [data-testid="stSidebar"] .stTextArea textarea::placeholder {{
-        color:rgba(255,255,255,0.38) !important;
+        color:rgba(255,255,255,0.42) !important;
+    }}
+    [data-testid="stSidebar"] [data-baseweb="base-input"],
+    [data-testid="stSidebar"] [data-baseweb="input"],
+    [data-testid="stSidebar"] [data-baseweb="textarea"] {{
+        background:rgba(255,255,255,0.10) !important;
+        border-color:rgba(255,255,255,0.28) !important;
     }}
     /* URL tab buttons inside sidebar */
     [data-testid="stSidebar"] .stTabs [data-baseweb="tab"] {{
@@ -239,7 +252,8 @@ def fetch_page(url):
             "Accept":"text/html,application/xhtml+xml","Accept-Language":"en-GB,en;q=0.9"}
     r = {"url":url,"status_code":None,"html":"","text":"","error":None,"load_time":None,
          "is_https":url.startswith("https://"),"redirect_chain":[],"html_raw_length":0,
-         "text_length":0,"text_to_html_ratio":0}
+         "text_length":0,"text_to_html_ratio":0,
+         "json_ld":[],"head_html":"","headings":[],"aria_html":"","images_sample":"","links_sample":""}
     try:
         t0 = time.time()
         resp = requests.get(url, headers=hdrs, timeout=15, allow_redirects=True)
@@ -248,12 +262,42 @@ def fetch_page(url):
         r["html"]            = resp.text
         r["final_url"]       = resp.url
         r["redirect_chain"]  = [x.url for x in resp.history]
+        r["html_raw_length"] = len(resp.text)
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # 1. JSON-LD — extract BEFORE removing scripts
+        for tag in soup.find_all("script", type="application/ld+json"):
+            txt = (tag.string or tag.get_text() or "").strip()
+            if txt: r["json_ld"].append(txt[:3000])
+
+        # 2. Full <head> for meta/canonical/OG/Twitter tags
+        head = soup.find("head")
+        if head: r["head_html"] = str(head)[:8000]
+
+        # 3. Headings
+        for lvl in ["h1","h2","h3","h4","h5","h6"]:
+            for tag in soup.find_all(lvl):
+                r["headings"].append((lvl, tag.get_text(strip=True)[:120]))
+
+        # 4. ARIA attributes
+        aria_tags = soup.find_all(lambda t: any(
+            k.startswith("aria-") or k == "role" for k in (t.attrs or {})))
+        r["aria_html"] = "\n".join(str(t)[:300] for t in aria_tags[:80])
+
+        # 5. Images
+        r["images_sample"] = "\n".join(
+            f'<img alt="{t.get("alt","[MISSING]")}">' for t in soup.find_all("img")[:80])
+
+        # 6. Links
+        r["links_sample"] = "\n".join(
+            f'<a href="{t.get("href","")[:100]}" rel="{t.get("rel","")}">{t.get_text(strip=True)[:60]}</a>'
+            for t in soup.find_all("a", href=True)[:80])
+
+        # Strip scripts/styles for clean body text
         for tag in soup(["script","style","noscript"]): tag.decompose()
         r["text"]            = soup.get_text(" ", strip=True)[:8000]
-        r["html_raw_length"] = len(resp.text)
         r["text_length"]     = len(r["text"])
-        r["text_to_html_ratio"] = round(r["text_length"] / max(len(resp.text),1), 3)
+        r["text_to_html_ratio"] = round(r["text_length"] / max(r["html_raw_length"],1), 3)
     except Exception as e:
         r["error"] = str(e)
     return r
@@ -295,91 +339,199 @@ def check_llms_txt(url):
 # =============================================================================
 # GEMINI
 # =============================================================================
-PROMPTS = {
-"ARIA Implementation": """Analyse ARIA implementation on this webpage for AI visibility.
-HTML: {html}
-Evaluate: roles/labels/landmarks, form labels, aria-live regions, structural clarity for AI.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"<2 sentences>","findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Structured Data / Schema": """Analyse schema.org structured data on this webpage.
-HTML: {html}
-Evaluate: JSON-LD types, completeness, missing types (Product, BreadcrumbList, FAQPage, Organization, etc), required fields.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","schemas_found":[],"schemas_missing":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Heading Structure": """Analyse heading structure H1-H6 on this webpage.
-HTML: {html}
-Text: {text}
-Evaluate: H1 count, hierarchy logic, skipped levels, descriptiveness, structure clarity for AI.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","h1_count":<int>,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Meta & SEO Signals": """Analyse meta tags and SEO signals.
-HTML: {html}
-Evaluate: title (presence, 50-60 chars), meta description (150-160 chars), canonical, Open Graph, Twitter card, robots meta.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","title_length":<int>,"meta_desc_present":true,"canonical_present":true,"og_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Link Quality": """Analyse link quality for AI visibility.
-HTML: {html}
-Evaluate: descriptive vs generic anchor text, external link authority, nofollow, image-only links.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Image Alt Text": """Analyse image alt text quality.
-HTML: {html}
-Evaluate: coverage %, quality, decorative images with empty alt, complex images needing descriptions.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","images_found":<int>,"images_with_alt":<int>,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Crawlability & Bot Access": """Analyse crawlability and bot access.
-HTML length:{html_len} Text length:{text_len} Text-HTML ratio:{ratio:.3f}
-Status:{status} HTTPS:{https} Load:{load}s Redirects:{redirects}
-Robots: {robots}
-HTML snippet:{html_snip}
-Evaluate: SSR vs CSR (ratio<0.05 = JS-heavy), bot blocking, HTTPS, redirects, load time, AI bot access.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","rendering_type":"SSR|CSR|Mixed","js_dependent":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"LLM Content Signals": """Analyse content quality and LLM/AI visibility signals.
-Text: {text}
-HTML snippet: {html_snip}
-Evaluate: E-E-A-T signals, content depth, factual density, LLM extractability, trust signals, entity clarity, FAQ-style content.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","eeat_signals":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"AI Search Health": """Analyse AI search health signals.
-llms_txt_found:{llms_found} llms_content:{llms_content}
-Robots AI bots: {robots_bots}
-HTML: {html_snip}
-Evaluate: llms.txt presence/quality, AI crawler access (GPTBot, ChatGPT-User, OAI-SearchBot, ClaudeBot etc), AI-specific meta tags.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","llms_txt_present":false,"ai_bots_blocked":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-
-"Duplicate Content & Tags": """Analyse duplicate content and canonical issues.
-HTML: {html}
-Ratio: {ratio:.3f}
-Evaluate: canonical tag presence, default CMS title risk, boilerplate/thin content, duplicate meta description risk.
-Return ONLY JSON (no fences): {{"score":<1-10>,"summary":"","canonical_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"","recommendation":""}}],"positive":[]}}""",
-}
-
 def analyse_dimension(client, page_data, dimension):
-    tpl = PROMPTS.get(dimension, 'Analyse {dimension}. Return ONLY JSON: {{"score":5,"summary":"","findings":[],"issues":[],"positive":[]}}')
-    html = page_data.get("html","")[:6000]
-    text = page_data.get("text","")[:3000]
-    robots = page_data.get("robots_data",{})
-    llms   = page_data.get("llms_txt",{})
-    prompt = tpl.format(
-        html=html, text=text, html_snip=html[:2000],
-        html_len=page_data.get("html_raw_length",0),
-        text_len=page_data.get("text_length",0),
-        ratio=page_data.get("text_to_html_ratio",0),
-        status=page_data.get("status_code",""),
-        https=page_data.get("is_https",""),
-        load=page_data.get("load_time",""),
-        redirects=page_data.get("redirect_chain",[]),
-        robots=json.dumps(robots),
-        llms_found=llms.get("found",False),
-        llms_content=llms.get("content","N/A"),
-        robots_bots=json.dumps(robots.get("ai_bots",{})),
-        dimension=dimension,
-    )
+    """Build a targeted prompt using pre-extracted signals, then call Gemini."""
+    json_ld      = "\n---\n".join(page_data.get("json_ld", [])) or "NONE FOUND"
+    head_html    = page_data.get("head_html", "")[:6000]
+    headings     = page_data.get("headings", [])
+    aria_html    = page_data.get("aria_html", "")[:4000]
+    images       = page_data.get("images_sample", "")[:3000]
+    links        = page_data.get("links_sample", "")[:3000]
+    text         = page_data.get("text", "")[:5000]
+    robots       = page_data.get("robots_data", {})
+    llms         = page_data.get("llms_txt", {})
+    html_snip    = page_data.get("html", "")[:3000]
+    headings_fmt = "\n".join(f"{h[0].upper()}: {h[1]}" for h in headings) or "NO HEADINGS FOUND"
+
+    BASE = 'Return ONLY a JSON object, no markdown fences, no extra text.\n'
+
+    prompts = {
+
+"ARIA Implementation": f"""Analyse the ARIA accessibility implementation on this webpage.
+
+ARIA elements found (elements with aria-* or role attributes):
+{aria_html or "NONE FOUND"}
+
+Full page text (for context):
+{text[:2000]}
+
+Evaluate:
+- Landmark roles present (main, navigation, banner, contentinfo, search, complementary)
+- aria-label and aria-labelledby usage quality
+- Form input labelling
+- aria-live regions for dynamic content
+- Whether ARIA aids AI understanding of page structure
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Structured Data / Schema": f"""Analyse the schema.org structured data on this webpage.
+
+JSON-LD blocks found on page:
+{json_ld}
+
+Evaluate:
+- What schema types ARE present and are they complete?
+- What important schema types are MISSING for this page type?
+- Are required/recommended properties populated?
+- Would an AI system get useful structured signals from this page?
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","schemas_found":[],"schemas_missing":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Heading Structure": f"""Analyse the heading structure (H1–H6) on this webpage.
+
+All headings found on page:
+{headings_fmt}
+
+Evaluate:
+- How many H1s are there? (should be exactly 1)
+- Is the hierarchy logical with no skipped levels?
+- Are headings descriptive and keyword-relevant?
+- Does the heading outline clearly describe page content for AI systems?
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","h1_count":<int>,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Meta & SEO Signals": f"""Analyse the meta tags and SEO signals on this webpage.
+
+Full <head> HTML:
+{head_html}
+
+Evaluate:
+- Title tag: present? length (50-60 chars ideal)? descriptive?
+- Meta description: present? length (150-160 chars ideal)?
+- Canonical tag: present and correct?
+- Open Graph tags (og:title, og:description, og:image): present?
+- Twitter Card tags: present?
+- Meta robots tag: present and configured correctly?
+- Any hreflang or other signals
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","title_length":<int>,"meta_desc_present":true,"canonical_present":true,"og_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Link Quality": f"""Analyse the link quality on this webpage.
+
+All links found on page ({len(page_data.get("links_sample","").splitlines())} shown):
+{links}
+
+Evaluate:
+- Descriptive vs generic anchor text ("click here", "read more", "here")
+- Links with no anchor text at all
+- nofollow/ugc/sponsored rel attribute usage
+- Internal vs external link balance
+- Whether anchor text helps AI systems understand content graph
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Image Alt Text": f"""Analyse the image alt text on this webpage.
+
+All images found on page:
+{images}
+
+Count images, count those with alt="" (decorative) and those with meaningful alt text vs [MISSING].
+
+Evaluate:
+- What percentage of images have alt text?
+- Quality of alt text (descriptive and relevant vs generic/keyword-stuffed)
+- Decorative images correctly using empty alt=""
+- Missing alt attributes (not even empty)
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","images_found":<int>,"images_with_alt":<int>,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Crawlability & Bot Access": f"""Analyse crawlability and AI bot access for this webpage.
+
+Technical signals:
+- HTML raw length: {page_data.get("html_raw_length",0)} chars
+- Extracted text length: {page_data.get("text_length",0)} chars
+- Text-to-HTML ratio: {page_data.get("text_to_html_ratio",0):.3f} (below 0.05 suggests JS rendering)
+- HTTP status: {page_data.get("status_code")}
+- HTTPS: {page_data.get("is_https")}
+- Load time: {page_data.get("load_time")}s
+- Redirect chain: {page_data.get("redirect_chain",[])}
+
+Robots.txt data:
+{json.dumps(robots, indent=2)}
+
+HTML snippet (first 3000 chars):
+{html_snip}
+
+Evaluate: SSR vs CSR rendering, bot blocking mechanisms, HTTPS, redirects, load time, AI bot permissions in robots.txt.
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","rendering_type":"SSR|CSR|Mixed","js_dependent":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"LLM Content Signals": f"""Analyse the content quality and LLM/AI visibility signals on this webpage.
+
+Page text content:
+{text}
+
+Page headings:
+{headings_fmt}
+
+JSON-LD found:
+{json_ld[:1000]}
+
+Evaluate:
+- E-E-A-T signals (expertise, experience, authoritativeness, trustworthiness)
+- Content depth and factual density
+- Author names, dates, credentials, citations
+- Brand/entity clarity
+- FAQ-style extractable Q&A content
+- Whether an LLM could extract clear, attributable facts from this page
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","eeat_signals":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"AI Search Health": f"""Analyse AI search health signals for this webpage.
+
+llms.txt found: {llms.get("found", False)}
+llms.txt content: {llms.get("content", "N/A")}
+
+Robots.txt AI bot access:
+{json.dumps(robots.get("ai_bots", {}), indent=2)}
+
+<head> snippet (for AI-specific meta tags):
+{head_html[:2000]}
+
+Evaluate:
+- llms.txt: present, well-structured, useful?
+- Which AI bots are explicitly allowed/blocked in robots.txt?
+- Any AI-specific meta tags or directives?
+- Overall AI search readiness
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","llms_txt_present":false,"ai_bots_blocked":[],"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+
+"Duplicate Content & Tags": f"""Analyse duplicate content and canonical tag issues on this webpage.
+
+<head> HTML (for canonical, title, meta):
+{head_html}
+
+Text-to-HTML ratio: {page_data.get("text_to_html_ratio",0):.3f}
+Page text sample: {text[:1500]}
+
+Evaluate:
+- Canonical tag: present and self-referencing correctly?
+- Title tag: unique or likely a CMS default/template?
+- Meta description: unique or templated?
+- Thin content signals (low text-to-HTML ratio, boilerplate heavy)
+- Duplicate content risk
+
+{BASE}{{"score":<1-10>,"summary":"<2 sentences>","canonical_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
+    }
+
+    prompt = prompts.get(dimension,
+        f'Analyse {dimension} for AI visibility. {BASE}{{"score":5,"summary":"","findings":[],"issues":[],"positive":[]}}')
+
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         raw  = resp.text.strip()
-        raw  = re.sub(r"^```(?:json)?\n?","",raw); raw = re.sub(r"\n?```$","",raw)
+        raw  = re.sub(r"^```(?:json)?\n?","",raw)
+        raw  = re.sub(r"\n?```$","",raw)
         return json.loads(raw)
     except json.JSONDecodeError:
         m = re.search(r'\{.*\}', raw if 'raw' in dir() else '{}', re.DOTALL)
