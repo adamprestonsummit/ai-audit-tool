@@ -248,8 +248,21 @@ def weighted_overall(scores):
 # FETCH + ROBOTS
 # =============================================================================
 def fetch_page(url):
-    hdrs = {"User-Agent":"Mozilla/5.0 (compatible; SummitAuditBot/2.0; +https://summit.co.uk)",
-            "Accept":"text/html,application/xhtml+xml","Accept-Language":"en-GB,en;q=0.9"}
+    hdrs = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    }
     r = {"url":url,"status_code":None,"html":"","text":"","error":None,"load_time":None,
          "is_https":url.startswith("https://"),"redirect_chain":[],"html_raw_length":0,
          "text_length":0,"text_to_html_ratio":0,
@@ -402,8 +415,15 @@ Evaluate:
 
 "Meta & SEO Signals": f"""Analyse the meta tags and SEO signals on this webpage.
 
-Full <head> HTML:
-{head_html}
+IMPORTANT: This tool fetches server-rendered HTML. If the head section below is empty or minimal,
+it means the site uses client-side rendering (JavaScript) to inject meta tags — this is itself
+a critical issue for AI/search crawlers that cannot execute JavaScript.
+
+Full <head> HTML ({len(head_html)} chars):
+{head_html if head_html.strip() else "HEAD IS EMPTY — page likely uses client-side rendering. Meta tags injected by JavaScript are invisible to AI crawlers."}
+
+Also check this raw HTML snippet for any meta tags in the document:
+{page_data.get("html","")[:2000]}
 
 Evaluate:
 - Title tag: present? length (50-60 chars ideal)? descriptive?
@@ -413,6 +433,7 @@ Evaluate:
 - Twitter Card tags: present?
 - Meta robots tag: present and configured correctly?
 - Any hreflang or other signals
+- If head is empty/minimal: flag CSR meta injection as critical issue
 
 {BASE}{{"score":<1-10>,"summary":"<2 sentences>","title_length":<int>,"meta_desc_present":true,"canonical_present":true,"og_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
 
@@ -508,18 +529,21 @@ Evaluate:
 
 "Duplicate Content & Tags": f"""Analyse duplicate content and canonical tag issues on this webpage.
 
-<head> HTML (for canonical, title, meta):
-{head_html}
+<head> HTML ({len(head_html)} chars):
+{head_html if head_html.strip() else "HEAD IS EMPTY — CSR page, meta tags not in static HTML"}
+
+Raw HTML snippet (first 2000 chars, check for canonical/title here if head empty):
+{page_data.get("html","")[:2000]}
 
 Text-to-HTML ratio: {page_data.get("text_to_html_ratio",0):.3f}
 Page text sample: {text[:1500]}
 
 Evaluate:
-- Canonical tag: present and self-referencing correctly?
+- Canonical tag: present and self-referencing correctly? (check both head_html AND raw snippet)
 - Title tag: unique or likely a CMS default/template?
 - Meta description: unique or templated?
 - Thin content signals (low text-to-HTML ratio, boilerplate heavy)
-- Duplicate content risk
+- If head is empty: this is a critical duplicate/canonical risk as crawlers see no canonical signal
 
 {BASE}{{"score":<1-10>,"summary":"<2 sentences>","canonical_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
     }
@@ -807,7 +831,7 @@ def build_docx(url, scores, all_results, exec_summary, logo_bytes):
         if pos:
             pp=doc.add_paragraph()
             r=pp.add_run("✓ Strengths:  "); r.bold=True; r.font.size=Pt(9); r.font.color.rgb=RGBColor(*FG_GREEN_RGB)
-            r2=pp.add_run("  |  ".join(pos[:3])); r2.font.size=Pt(9); r2.font.color.rgb=RGBColor(*FG_GREEN_RGB)
+            r2=pp.add_run("  |  ".join(str(p) for p in pos[:3] if p)); r2.font.size=Pt(9); r2.font.color.rgb=RGBColor(*FG_GREEN_RGB)
         doc.add_paragraph()
 
     # Priority recs
