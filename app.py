@@ -956,9 +956,13 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
 # =============================================================================
 # AUDIT RUNNER — returns (scores, all_results, exec_summary, page_data)
 # =============================================================================
-def run_single_audit(client, url, progress_fn=None, status_fn=None):
-    def prog(v): progress_fn(v) if progress_fn else None
-    def stat(t): status_fn(t) if status_fn else None
+def run_single_audit(client, url, progress_bar=None, status_box=None):
+    def prog(v):
+        if progress_bar is not None:
+            progress_bar.progress(v)
+    def stat(t):
+        if status_box is not None:
+            status_box.text(t)
 
     stat("📡 Fetching page…"); prog(5)
     page_data = fetch_page(url)
@@ -1249,8 +1253,8 @@ def main():
 
             scores,all_results,exec_summary,page_data = run_single_audit(
                 client, url,
-                progress_fn=prog.progress,
-                status_fn=stat.text
+                progress_bar=prog,
+                status_box=stat
             )
             prog.empty(); stat.empty()
 
