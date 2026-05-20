@@ -1142,10 +1142,23 @@ def _pdf_safe(text, maxlen=200):
     return text[:maxlen].strip()
 
 
-def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
-    """Visual one-pager PDF mirroring the dashboard: score tiles + bar chart + radar + issues + summary."""
-    import math
 
+def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
+    """
+    Three-page visual PDF matching the dashboard:
+      Page 1 — Hero + Score tiles + Horizontal bar chart
+      Page 2 — Radar chart + Issues & Recommendations table
+      Page 3 — Executive Summary
+    Charts built with matplotlib, embedded as PNG.
+    """
+    import math
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import numpy as np
+
+    # ── Shared helpers ────────────────────────────────────────────────────────
     logo_tmp = "/tmp/summit_logo_pdf.png"
     with open(logo_tmp, "wb") as f:
         f.write(logo_bytes)
@@ -1154,7 +1167,8 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
     band     = score_band(overall)
     bg_rgb   = {"red":(253,233,229), "amber":(255,244,224), "green":(230,245,236)}
     fg_rgb2  = {"red":FG_RED_RGB,    "amber":FG_AMBER_RGB,   "green":FG_GREEN_RGB}
-    lm       = {"red":"Needs Attention", "amber":"Developing", "green":"Good"}
+    fg_hex   = {"red":FG_RED,        "amber":FG_AMBER,        "green":FG_GREEN}
+    lm_text  = {"red":"Needs Attention", "amber":"Developing", "green":"Good"}
     dim_short = {
         "Crawlability & Bot Access":"Crawlability",
         "Structured Data / Schema":"Structured Data",
@@ -1168,165 +1182,335 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
         "Duplicate Content & Tags":"Duplicates",
     }
 
+    def hex_to_rgb01(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i+2],16)/255 for i in (0,2,4))
+
+    S_RED_01      = hex_to_rgb01(S_RED)
+    S_CHARCOAL_01 = hex_to_rgb01(S_CHARCOAL)
+    DIM_COLORS = {
+        "Crawlability & Bot Access":   S_CHARCOAL_01,
+        "Structured Data / Schema":    hex_to_rgb01("#7C3AED"),
+        "LLM Content Signals":         S_RED_01,
+        "Meta & SEO Signals":          hex_to_rgb01("#0E7C4A"),
+        "Heading Structure":           hex_to_rgb01("#0369A1"),
+        "ARIA Implementation":         hex_to_rgb01("#BE185D"),
+        "Link Quality":                hex_to_rgb01("#78350F"),
+        "Image Alt Text":              hex_to_rgb01("#374151"),
+        "AI Search Health":            hex_to_rgb01("#B45309"),
+        "Duplicate Content & Tags":    hex_to_rgb01("#6B6B80"),
+    }
+
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1])
+
+    # ── Build charts as PNG byte buffers ─────────────────────────────────────
+
+    def make_bar_chart():
+        dims  = [dim_short.get(d, d[:14]) for d, _ in sorted_scores]
+        vals  = [v for _, v in sorted_scores]
+        colors= [hex_to_rgb01(fg_hex[score_band(v)]) for v in vals]
+        bg_cs = [hex_to_rgb01(
+            {"red":BG_RED,"amber":BG_AMBER,"green":BG_GREEN}[score_band(v)]
+        ) for v in vals]
+
+        fig, ax = plt.subplots(figsize=(7.2, 3.8))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("white")
+
+        y = np.arange(len(dims))
+        # Background track
+        ax.barh(y, [10]*len(dims), height=0.6, color="#F3F3F5", zorder=1)
+        # Score bar
+        bars = ax.barh(y, vals, height=0.6, color=colors, zorder=2)
+        # Score label
+        for i, (bar, v) in enumerate(zip(bars, vals)):
+            ax.text(v + 0.15, i, f"{v}/10",
+                    va="center", ha="left", fontsize=8,
+                    color=colors[i], fontweight="bold")
+        # Threshold lines
+        ax.axvline(3.3, color=hex_to_rgb01(FG_RED),   lw=0.8, ls="--", alpha=0.5, zorder=3)
+        ax.axvline(6.6, color=hex_to_rgb01(FG_GREEN), lw=0.8, ls="--", alpha=0.5, zorder=3)
+        ax.set_yticks(y)
+        ax.set_yticklabels(dims, fontsize=8)
+        ax.set_xlim(0, 12)
+        ax.set_xticks([0,2,4,6,8,10])
+        ax.tick_params(axis="x", labelsize=7)
+        ax.set_xlabel("Score / 10", fontsize=8)
+        ax.invert_yaxis()
+        for spine in ax.spines.values(): spine.set_visible(False)
+        ax.xaxis.grid(True, color="#EEEEEE", zorder=0)
+        plt.tight_layout(pad=0.5)
+        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=150, bbox_inches="tight"); buf.seek(0)
+        plt.close(fig)
+        return buf
+
+    def make_radar_chart():
+        dims = list(DIMENSION_CONFIG.keys())
+        labels = [dim_short.get(d, d) for d in dims]
+        vals   = [scores.get(d, 0) for d in dims]
+        N = len(dims)
+        angles = [n / float(N) * 2 * math.pi for n in range(N)]
+        angles += angles[:1]; vals_plot = vals + vals[:1]
+
+        fig, ax = plt.subplots(figsize=(4.5, 4.5), subplot_kw=dict(polar=True))
+        fig.patch.set_facecolor("white")
+        ax.set_facecolor("#FAFAFA")
+        ax.plot(angles, vals_plot, color=S_RED_01, lw=2.0, zorder=3)
+        ax.fill(angles, vals_plot, color=S_RED_01, alpha=0.12, zorder=2)
+        ax.scatter(angles[:-1], vals, color=S_RED_01, s=25, zorder=4)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, size=6.5, color="#333333")
+        ax.set_ylim(0, 10)
+        ax.set_yticks([2, 4, 6, 8, 10])
+        ax.set_yticklabels(["2","4","6","8","10"], size=6, color="#AAAAAA")
+        ax.grid(color="#DDDDDD", linewidth=0.5)
+        ax.spines["polar"].set_color("#CCCCCC")
+        # Threshold circles
+        theta = np.linspace(0, 2*math.pi, 100)
+        ax.plot(theta, [3.3]*100, color=hex_to_rgb01(FG_RED),   lw=0.6, ls=":", alpha=0.5)
+        ax.plot(theta, [6.6]*100, color=hex_to_rgb01(FG_GREEN), lw=0.6, ls=":", alpha=0.5)
+        plt.tight_layout(pad=0.3)
+        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=150, bbox_inches="tight"); buf.seek(0)
+        plt.close(fig)
+        return buf
+
+    def make_score_tiles():
+        """5×2 grid of score tiles."""
+        items = sorted_scores  # 10 items
+        ncols, nrows = 5, 2
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.2, 2.0))
+        fig.patch.set_facecolor("white")
+        for idx, (dim, s) in enumerate(items):
+            r, c = divmod(idx, ncols)
+            ax = axes[r][c]
+            bd = score_band(s)
+            bg = tuple(x/255 for x in bg_rgb[bd])
+            fg = tuple(x/255 for x in fg_rgb2[bd])
+            ax.set_facecolor(bg)
+            ax.set_xlim(0,1); ax.set_ylim(0,1)
+            ax.axis("off")
+            ax.text(0.5, 0.62, f"{s}/10", ha="center", va="center",
+                    fontsize=14, fontweight="bold", color=fg,
+                    transform=ax.transAxes)
+            short = dim_short.get(dim, dim[:12])
+            ax.text(0.5, 0.22, short, ha="center", va="center",
+                    fontsize=6.5, color="#444444",
+                    transform=ax.transAxes)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#FFFFFF"); spine.set_linewidth(2)
+        plt.subplots_adjust(wspace=0.04, hspace=0.04)
+        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                                        facecolor="white"); buf.seek(0)
+        plt.close(fig)
+        return buf
+
+    # ── FPDF document ─────────────────────────────────────────────────────────
     class SummitPDF(FPDF):
         def header(self):
-            self.image(logo_tmp, 12, 8, 22)
-            self.set_font("Helvetica","B",15); self.set_text_color(*S_CHARCOAL_RGB)
-            self.set_xy(38,10); self.cell(0,7,"AI Visibility Audit",ln=False)
-            self.set_font("Helvetica","",8.5); self.set_text_color(130,130,140)
-            self.set_xy(38,18)
-            self.cell(0,5,_pdf_safe(f"{url}  -  {datetime.now().strftime('%B %Y')}",120),ln=True)
-            self.set_draw_color(*S_RED_RGB); self.set_line_width(0.9)
-            self.line(12,27,198,27); self.ln(3)
+            self.image(logo_tmp, 12, 8, 20)
+            self.set_font("Helvetica","B",14)
+            self.set_text_color(*S_CHARCOAL_RGB)
+            self.set_xy(35, 10)
+            self.cell(0, 6, "AI Visibility Audit", ln=False)
+            self.set_font("Helvetica","",8)
+            self.set_text_color(130,130,140)
+            self.set_xy(35, 17)
+            self.cell(0, 5, _pdf_safe(f"{url}  -  {datetime.now().strftime('%B %Y')}", 110), ln=True)
+            self.set_draw_color(*S_RED_RGB)
+            self.set_line_width(0.8)
+            self.line(12, 26, 198, 26)
+            self.ln(2)
+
         def footer(self):
-            self.set_y(-11); self.set_font("Helvetica","I",7.5)
+            self.set_y(-11)
+            self.set_font("Helvetica","I",7.5)
             self.set_text_color(160,160,170)
-            self.cell(0,5,f"Summit AI Visibility Audit  -  Confidential  -  Page {self.page_no()}",align="C")
+            self.cell(0, 5,
+                f"Summit AI Visibility Audit  -  Confidential  -  Page {self.page_no()}",
+                align="C")
 
     pdf = SummitPDF()
-    pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=14)
 
-    # ── PAGE 1: Hero + Score tiles + Bar chart ────────────────────────────
-    # Hero row
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGE 1 — Hero + Score tiles + Bar chart
+    # ════════════════════════════════════════════════════════════════════════
+    pdf.add_page()
+
+    # Hero block
     y0 = pdf.get_y()
-    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.rect(12,y0,52,30,"F")
-    pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",28)
-    pdf.set_xy(12,y0+2); pdf.cell(52,13,f"{overall}/10",align="C",ln=False)
-    pdf.set_font("Helvetica","",7.5); pdf.set_text_color(180,180,200)
-    pdf.set_xy(12,y0+17); pdf.cell(52,7,"Overall AI Visibility Score",align="C",ln=False)
+    pdf.set_fill_color(*S_CHARCOAL_RGB)
+    pdf.rect(12, y0, 52, 28, "F")
+    pdf.set_text_color(255,255,255)
+    pdf.set_font("Helvetica","B",26)
+    pdf.set_xy(12, y0+2)
+    pdf.cell(52, 12, f"{overall}/10", align="C", ln=False)
+    pdf.set_font("Helvetica","",7)
+    pdf.set_text_color(180,180,205)
+    pdf.set_xy(12, y0+16)
+    pdf.cell(52, 6, "Overall AI Visibility Score", align="C", ln=False)
 
-    pdf.set_fill_color(*bg_rgb[band]); pdf.rect(66,y0,48,30,"F")
-    pdf.set_text_color(*fg_rgb2[band]); pdf.set_font("Helvetica","B",14)
-    pdf.set_xy(66,y0+6); pdf.cell(48,9,lm[band],align="C",ln=False)
-    pdf.set_font("Helvetica","",7.5)
-    pdf.set_xy(66,y0+18); pdf.cell(48,6,f"Weighted across {len(scores)} dimensions",align="C",ln=False)
+    pdf.set_fill_color(*bg_rgb[band])
+    pdf.rect(66, y0, 50, 28, "F")
+    pdf.set_text_color(*fg_rgb2[band])
+    pdf.set_font("Helvetica","B",13)
+    pdf.set_xy(66, y0+7)
+    pdf.cell(50, 8, lm_text[band], align="C", ln=False)
+    pdf.set_font("Helvetica","",7)
+    pdf.set_xy(66, y0+17)
+    pdf.cell(50, 5, f"Weighted across {len(scores)} dimensions", align="C", ln=False)
 
+    # Stats boxes
     n_crit = sum(1 for s in scores.values() if score_band(s)=="red")
     n_warn = sum(1 for s in scores.values() if score_band(s)=="amber")
     n_good = sum(1 for s in scores.values() if score_band(s)=="green")
-    for i,(val,lbl,col,bg) in enumerate([
-        (n_crit,"Critical",FG_RED_RGB,(253,233,229)),
-        (n_warn,"Warnings",FG_AMBER_RGB,(255,244,224)),
-        (n_good,"Passing",FG_GREEN_RGB,(230,245,236)),
-    ]):
-        bx = 117+i*29
-        pdf.set_fill_color(*bg); pdf.rect(bx,y0,26,30,"F")
-        pdf.set_text_color(*col); pdf.set_font("Helvetica","B",16)
-        pdf.set_xy(bx,y0+4); pdf.cell(26,10,str(val),align="C",ln=False)
-        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(100,100,110)
-        pdf.set_xy(bx,y0+18); pdf.cell(26,5,lbl,align="C",ln=False)
-    pdf.ln(y0+36-pdf.get_y())
+    stat_items = [
+        (n_crit,"Critical",  FG_RED_RGB,   (253,233,229)),
+        (n_warn,"Warnings",  FG_AMBER_RGB, (255,244,224)),
+        (n_good,"Passing",   FG_GREEN_RGB, (230,245,236)),
+    ]
+    for i,(val,lbl,col,bg) in enumerate(stat_items):
+        bx = 119 + i*27
+        pdf.set_fill_color(*bg)
+        pdf.rect(bx, y0, 24, 28, "F")
+        pdf.set_text_color(*col)
+        pdf.set_font("Helvetica","B",17)
+        pdf.set_xy(bx, y0+4)
+        pdf.cell(24, 10, str(val), align="C", ln=False)
+        pdf.set_font("Helvetica","",6.5)
+        pdf.set_text_color(100,100,110)
+        pdf.set_xy(bx, y0+17)
+        pdf.cell(24, 5, lbl, align="C", ln=False)
+
+    pdf.set_y(y0+32)
+    pdf.ln(2)
+
+    # Section heading helper
+    def pdf_section(title):
+        pdf.set_font("Helvetica","B",8.5)
+        pdf.set_text_color(*S_CHARCOAL_RGB)
+        pdf.cell(0, 5, title, ln=True)
+        pdf.set_draw_color(*S_RED_RGB)
+        pdf.set_line_width(0.5)
+        pdf.line(12, pdf.get_y(), 198, pdf.get_y())
+        pdf.ln(2)
+
+    # Score tiles
+    pdf_section("Dimension Scores")
+    tiles_buf = make_score_tiles()
+    tiles_tmp = "/tmp/pdf_tiles.png"
+    with open(tiles_tmp,"wb") as f: f.write(tiles_buf.getvalue())
+    pdf.image(tiles_tmp, x=12, w=186)
     pdf.ln(3)
 
-    # ── Score tiles ──
-    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,5,"Dimension Scores",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
-    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+    # Bar chart
+    pdf_section("Score by Dimension")
+    bar_buf = make_bar_chart()
+    bar_tmp = "/tmp/pdf_bar.png"
+    with open(bar_tmp,"wb") as f: f.write(bar_buf.getvalue())
+    pdf.image(bar_tmp, x=12, w=186)
 
-    tile_w=37; tile_h=16; gap=0.5
-    sorted_scores = sorted(scores.items(), key=lambda x:x[1])
-    for i,(dim,s) in enumerate(sorted_scores):
-        bd=score_band(s); col_i=i%5
-        if col_i==0 and i>0: pdf.ln(tile_h+gap)
-        y=pdf.get_y(); x=12+col_i*(tile_w+gap)
-        pdf.set_fill_color(*bg_rgb[bd]); pdf.rect(x,y,tile_w,tile_h,"F")
-        pdf.set_text_color(*fg_rgb2[bd]); pdf.set_font("Helvetica","B",13)
-        pdf.set_xy(x,y+1); pdf.cell(tile_w,6,f"{s}/10",align="C",ln=False)
-        short=dim_short.get(dim,dim[:12])
-        pdf.set_font("Helvetica","",6); pdf.set_text_color(70,70,80)
-        pdf.set_xy(x,y+9); pdf.cell(tile_w,4,short,align="C",ln=False)
-    pdf.ln(tile_h+5)
-
-    # ── Horizontal bar chart (drawn with fpdf rects) ──
-    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,5,"Score by Dimension",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
-    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
-
-    bar_area_w=140; bar_label_w=40; bar_h=5.5; bar_gap=1.5
-    max_score=10
-    # Draw axis ticks
-    for tick in [0,2,4,6,8,10]:
-        tx=12+bar_label_w+(tick/max_score)*bar_area_w
-        pdf.set_draw_color(220,220,225); pdf.set_line_width(0.2)
-        # tick line drawn per row below
-    for dim,s in sorted_scores:
-        y_bar=pdf.get_y()
-        short=dim_short.get(dim,dim[:16])
-        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(60,60,70)
-        pdf.set_xy(12,y_bar); pdf.cell(bar_label_w,bar_h,short,align="R",ln=False)
-        # bg track
-        bx=12+bar_label_w+1
-        pdf.set_fill_color(240,240,242); pdf.rect(bx,y_bar+0.5,bar_area_w,bar_h-1,"F")
-        # coloured bar
-        bd=score_band(s); bar_len=(s/max_score)*bar_area_w
-        pdf.set_fill_color(*fg_rgb2[bd]); pdf.rect(bx,y_bar+0.5,bar_len,bar_h-1,"F")
-        # score label
-        pdf.set_font("Helvetica","B",6.5); pdf.set_text_color(*fg_rgb2[bd])
-        pdf.set_xy(bx+bar_len+1,y_bar); pdf.cell(12,bar_h,f"{s}/10",ln=False)
-        pdf.ln(bar_h+bar_gap)
-    pdf.ln(3)
-
-    # ── PAGE 2: Issues list + Executive Summary ──────────────────────────
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGE 2 — Radar + Issues table
+    # ════════════════════════════════════════════════════════════════════════
     pdf.add_page()
 
-    # Issues table
-    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,5,"Issues & Recommendations",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
-    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+    # Radar chart (left) + Score table (right)
+    pdf_section("AI Visibility Profile")
+    radar_buf = make_radar_chart()
+    radar_tmp = "/tmp/pdf_radar.png"
+    with open(radar_tmp,"wb") as f: f.write(radar_buf.getvalue())
+    pdf.image(radar_tmp, x=12, w=90)
 
-    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.set_text_color(255,255,255)
+    # Score table alongside radar
+    tx = 106; ty = pdf.get_y() - 80  # align with radar top
+    pdf.set_xy(tx, ty)
+    # Table header
+    col_ws = [44, 12, 14, 18]
+    hdrs   = ["Dimension","Wt","Score","Rating"]
+    pdf.set_fill_color(*S_CHARCOAL_RGB)
+    pdf.set_text_color(255,255,255)
     pdf.set_font("Helvetica","B",7)
-    pdf.cell(5,5,"",fill=True,border=0)
-    pdf.cell(18,5,"Severity",fill=True,border=0)
-    pdf.cell(32,5,"Dimension",fill=True,border=0)
-    pdf.cell(143,5,"Recommendation",fill=True,border=0); pdf.ln()
+    for w, h in zip(col_ws, hdrs):
+        pdf.cell(w, 5, h, fill=True, border=0)
+    pdf.ln()
+    sev_lbl = {"red":"Needs Attn","amber":"Needs Work","green":"Good"}
+    for dim, s in sorted_scores:
+        bd = score_band(s)
+        pdf.set_fill_color(250,250,252)
+        pdf.set_text_color(50,50,60)
+        pdf.set_font("Helvetica","",6.5)
+        short = dim_short.get(dim, dim[:18])
+        wp = int(DIMENSION_CONFIG.get(dim,{}).get("weight",0.05)*100)
+        pdf.set_xy(tx, pdf.get_y())
+        pdf.cell(col_ws[0], 5, f" {short}", fill=True, border=0)
+        pdf.cell(col_ws[1], 5, f"{wp}%", fill=True, border=0, align="C")
+        # Score cell coloured
+        pdf.set_fill_color(*bg_rgb[bd])
+        pdf.set_text_color(*fg_rgb2[bd])
+        pdf.set_font("Helvetica","B",6.5)
+        pdf.cell(col_ws[2], 5, f"{s}/10", fill=True, border=0, align="C")
+        pdf.set_font("Helvetica","",6)
+        pdf.cell(col_ws[3], 5, sev_lbl[bd], fill=True, border=0)
+        pdf.ln()
 
-    all_recs=[]
-    for d,res in all_results.items():
-        w=DIMENSION_CONFIG.get(d,{}).get("weight",0.05)
-        for iss in res.get("issues",[]):
-            sev=iss.get("severity","info")
-            all_recs.append({
-                "pri":{"critical":1,"warning":2,"info":3}.get(sev,3),
-                "w":w,"d":d,
-                "rec":iss.get("recommendation",""),
-                "sev":sev
-            })
-    all_recs.sort(key=lambda x:(x["pri"],-x["w"]))
+    # Issues & Recommendations table
+    pdf.set_y(pdf.get_y()+4)
+    pdf_section("Issues & Recommendations")
+    # Header
+    iss_ws = [5, 17, 30, 146]
+    pdf.set_fill_color(*S_CHARCOAL_RGB)
+    pdf.set_text_color(255,255,255)
+    pdf.set_font("Helvetica","B",7)
+    for w, h in zip(iss_ws, ["#","Severity","Dimension","Recommendation"]):
+        pdf.cell(w, 5, h, fill=True, border=0)
+    pdf.ln()
 
     sev_col_map = {"critical":FG_RED_RGB,"warning":FG_AMBER_RGB,"info":(21,80,175)}
     sev_bg_map  = {"critical":(253,233,229),"warning":(255,244,224),"info":(235,240,251)}
 
-    for rank,rec in enumerate(all_recs[:18],1):
-        sev=rec["sev"]
-        fill=(250,250,252) if rank%2==0 else (245,245,248)
-        pdf.set_fill_color(*fill); pdf.set_text_color(70,70,80)
-        pdf.set_font("Helvetica","B",7)
-        pdf.cell(5,5,str(rank),fill=True,border=0,align="C")
-        pdf.set_fill_color(*sev_bg_map.get(sev,fill))
+    all_recs = []
+    for d, res in all_results.items():
+        w = DIMENSION_CONFIG.get(d,{}).get("weight",0.05)
+        for iss in res.get("issues",[]):
+            sev = iss.get("severity","info")
+            all_recs.append({
+                "pri": {"critical":1,"warning":2,"info":3}.get(sev,3),
+                "w": w, "d": d,
+                "rec": iss.get("recommendation",""),
+                "sev": sev
+            })
+    all_recs.sort(key=lambda x:(x["pri"],-x["w"]))
+
+    for rank, rec in enumerate(all_recs[:20], 1):
+        sev = rec["sev"]
+        fill_bg = (250,250,252) if rank%2==0 else (245,245,248)
+        pdf.set_fill_color(*fill_bg)
+        pdf.set_text_color(70,70,80)
+        pdf.set_font("Helvetica","B",6.5)
+        pdf.cell(iss_ws[0], 5, str(rank), fill=True, border=0, align="C")
+        pdf.set_fill_color(*sev_bg_map.get(sev, fill_bg))
         pdf.set_text_color(*sev_col_map.get(sev,(80,80,80)))
-        pdf.cell(18,5,f" {sev.upper()}",fill=True,border=0)
-        pdf.set_fill_color(*fill); pdf.set_text_color(60,60,70)
-        pdf.set_font("Helvetica","",7)
-        pdf.cell(32,5,f" {dim_short.get(rec['d'],rec['d'][:14])}",fill=True,border=0)
-        rec_txt=_pdf_safe(rec["rec"],160)
-        pdf.cell(143,5,f" {rec_txt}",fill=True,border=0); pdf.ln()
+        pdf.cell(iss_ws[1], 5, f" {sev.upper()}", fill=True, border=0)
+        pdf.set_fill_color(*fill_bg)
+        pdf.set_text_color(60,60,70)
+        pdf.set_font("Helvetica","",6.5)
+        pdf.cell(iss_ws[2], 5, f" {dim_short.get(rec['d'],rec['d'][:16])}", fill=True, border=0)
+        rec_txt = _pdf_safe(rec["rec"], 180)
+        pdf.cell(iss_ws[3], 5, f" {rec_txt}", fill=True, border=0)
+        pdf.ln()
 
-    pdf.ln(5)
-
-    # Executive Summary
-    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,5,"Executive Summary",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
-    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
-    paras=[p.strip() for p in exec_summary.split("\n\n") if p.strip()][:4]
-    pdf.set_font("Helvetica","",8.5); pdf.set_text_color(40,40,50)
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGE 3 — Executive Summary
+    # ════════════════════════════════════════════════════════════════════════
+    pdf.add_page()
+    pdf_section("Executive Summary")
+    paras = [p.strip() for p in exec_summary.split("\n\n") if p.strip()]
+    pdf.set_font("Helvetica","",9)
+    pdf.set_text_color(35,35,45)
     for para in paras:
-        pdf.multi_cell(0,4.8,_pdf_safe(para,1000)); pdf.ln(1.5)
+        pdf.multi_cell(0, 5.2, _pdf_safe(para, 1200))
+        pdf.ln(1.5)
 
     raw = pdf.output()
     return bytes(raw) if not isinstance(raw, bytes) else raw
