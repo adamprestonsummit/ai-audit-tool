@@ -849,6 +849,8 @@ def _hdg(doc, text, size=14):
 def build_docx(url, scores, all_results, exec_summary, logo_bytes):
     doc=Document()
     for sec in doc.sections:
+        sec.page_width=Emu(int(11906*914.4))
+        sec.page_height=Emu(int(16838*914.4))
         sec.top_margin=Inches(0.7); sec.bottom_margin=Inches(0.7)
         sec.left_margin=Inches(0.8); sec.right_margin=Inches(0.8)
     doc.styles["Normal"].font.name="Arial"; doc.styles["Normal"].font.size=Pt(10)
@@ -869,16 +871,16 @@ def build_docx(url, scores, all_results, exec_summary, logo_bytes):
     lm={"red":"Needs Attention","amber":"Developing","green":"Good"}
     _hdg(doc,"Overall Score")
     t=doc.add_table(rows=1,cols=3); t.style="Table Grid"; t.autofit=False
-    ws=[1800,1800,6200]; cells=t.rows[0].cells
-    cells[0].width=Emu(ws[0]*914); _set_cell_bg(cells[0],"3E405B")
+    ws=[1600,1600,6402]; cells=t.rows[0].cells
+    cells[0].width=Emu(int(ws[0]*914.4)); _set_cell_bg(cells[0],"3E405B")
     p=cells[0].paragraphs[0]; p.alignment=WD_ALIGN_PARAGRAPH.CENTER
     r=p.add_run(str(overall)); r.bold=True; r.font.size=Pt(40); r.font.color.rgb=RGBColor(255,255,255)
     p2=cells[0].add_paragraph("/10"); p2.alignment=WD_ALIGN_PARAGRAPH.CENTER
     p2.runs[0].font.color.rgb=RGBColor(200,200,210); p2.runs[0].font.size=Pt(13)
-    cells[1].width=Emu(ws[1]*914); _set_cell_bg(cells[1],bg_hm[band])
+    cells[1].width=Emu(int(ws[1]*914.4)); _set_cell_bg(cells[1],bg_hm[band])
     p=cells[1].paragraphs[0]; p.alignment=WD_ALIGN_PARAGRAPH.CENTER
     r=p.add_run(lm[band]); r.bold=True; r.font.size=Pt(13); r.font.color.rgb=RGBColor(*fg_rm[band])
-    cells[2].width=Emu(ws[2]*914); _set_cell_bg(cells[2],"F7F7F8")
+    cells[2].width=Emu(int(ws[2]*914.4)); _set_cell_bg(cells[2],"F7F7F8")
     p=cells[2].paragraphs[0]
     r=p.add_run("Score breakdown"); r.bold=True; r.font.size=Pt(9); r.font.color.rgb=RGBColor(*S_CHARCOAL_RGB)
     for d,s in sorted(scores.items(),key=lambda x:x[1]):
@@ -898,14 +900,14 @@ def build_docx(url, scores, all_results, exec_summary, logo_bytes):
     # Scores table
     _hdg(doc,"Dimension Scores")
     dt=doc.add_table(rows=1,cols=4); dt.style="Table Grid"; dt.autofit=False
-    dw=[3800,900,1000,4100]
+    dw=[3600,700,900,4402]
     for i,(cell,hdr) in enumerate(zip(dt.rows[0].cells,["Dimension","Weight","Score","Rating"])):
         cell.width=Emu(dw[i]*914); _set_cell_bg(cell,"3E405B")
         r=cell.paragraphs[0].add_run(hdr); r.bold=True
         r.font.color.rgb=RGBColor(255,255,255); r.font.size=Pt(9)
     for d,s in scores.items():
         row=dt.add_row(); bd=score_band(s); wp=int(DIMENSION_CONFIG.get(d,{}).get("weight",0.05)*100)
-        for i,w in enumerate(dw): row.cells[i].width=Emu(w*914)
+        for i,w in enumerate(dw): row.cells[i].width=Emu(int(w*914.4))
         row.cells[0].paragraphs[0].add_run(d).font.size=Pt(9)
         row.cells[1].paragraphs[0].add_run(f"{wp}%").font.size=Pt(9)
         _set_cell_bg(row.cells[2],bg_hm[bd])
@@ -933,14 +935,14 @@ def build_docx(url, scores, all_results, exec_summary, logo_bytes):
         issues=res.get("issues",[])
         if issues:
             it=doc.add_table(rows=1,cols=3); it.style="Table Grid"; it.autofit=False
-            iw=[1000,3500,5300]
+            iw=[900,3200,5502]
             for i,(cell,hdr) in enumerate(zip(it.rows[0].cells,["Severity","Issue","Recommendation"])):
                 cell.width=Emu(iw[i]*914); _set_cell_bg(cell,"3E405B")
                 r=cell.paragraphs[0].add_run(hdr); r.bold=True
                 r.font.color.rgb=RGBColor(255,255,255); r.font.size=Pt(8.5)
             for iss in issues:
                 sev=iss.get("severity","info"); row=it.add_row()
-                for i,w in enumerate(iw): row.cells[i].width=Emu(w*914)
+                for i,w in enumerate(iw): row.cells[i].width=Emu(int(w*914.4))
                 _set_cell_bg(row.cells[0],sev_bg.get(sev,"F5F5F5"))
                 sr=row.cells[0].paragraphs[0].add_run(sev.upper())
                 sr.bold=True; sr.font.size=Pt(8); sr.font.color.rgb=RGBColor(*sev_fg.get(sev,(80,80,80)))
@@ -964,14 +966,14 @@ def build_docx(url, scores, all_results, exec_summary, logo_bytes):
                              "d":d,"issue":iss.get("issue",""),"rec":iss.get("recommendation",""),"sev":sev})
     all_recs.sort(key=lambda x:(x["pri"],-x["w"]))
     rt=doc.add_table(rows=1,cols=4); rt.style="Table Grid"; rt.autofit=False
-    rw=[600,2000,3400,3800]
+    rw=[500,1700,3200,4202]
     for i,(cell,hdr) in enumerate(zip(rt.rows[0].cells,["#","Dimension","Issue","Recommendation"])):
         cell.width=Emu(rw[i]*914); _set_cell_bg(cell,"3E405B")
         r=cell.paragraphs[0].add_run(hdr); r.bold=True
         r.font.color.rgb=RGBColor(255,255,255); r.font.size=Pt(9)
     for rank,rec in enumerate(all_recs[:15],1):
         row=rt.add_row(); sev=rec["sev"]
-        for i,w in enumerate(rw): row.cells[i].width=Emu(w*914)
+        for i,w in enumerate(rw): row.cells[i].width=Emu(int(w*914.4))
         _set_cell_bg(row.cells[0],sev_bg.get(sev,"F5F5F5"))
         nr=row.cells[0].paragraphs[0].add_run(str(rank)); nr.bold=True; nr.font.size=Pt(9)
         nr.font.color.rgb=RGBColor(*sev_fg.get(sev,(80,80,80)))
@@ -1141,15 +1143,19 @@ def _pdf_safe(text, maxlen=200):
 
 
 def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
-    """Full PDF with issues list."""
-    logo_tmp="/tmp/summit_logo_pdf.png"
-    with open(logo_tmp,"wb") as f: f.write(logo_bytes)
+    """Visual one-pager PDF mirroring the dashboard: score tiles + bar chart + radar + issues + summary."""
+    import math
 
-    overall=weighted_overall(scores); band=score_band(overall)
-    bg_rgb={"red":(253,233,229),"amber":(255,244,224),"green":(230,245,236)}
-    fg_rgb2={"red":FG_RED_RGB,"amber":FG_AMBER_RGB,"green":FG_GREEN_RGB}
-    lm={"red":"Needs Attention","amber":"Developing","green":"Good"}
-    dim_short={
+    logo_tmp = "/tmp/summit_logo_pdf.png"
+    with open(logo_tmp, "wb") as f:
+        f.write(logo_bytes)
+
+    overall  = weighted_overall(scores)
+    band     = score_band(overall)
+    bg_rgb   = {"red":(253,233,229), "amber":(255,244,224), "green":(230,245,236)}
+    fg_rgb2  = {"red":FG_RED_RGB,    "amber":FG_AMBER_RGB,   "green":FG_GREEN_RGB}
+    lm       = {"red":"Needs Attention", "amber":"Developing", "green":"Good"}
+    dim_short = {
         "Crawlability & Bot Access":"Crawlability",
         "Structured Data / Schema":"Structured Data",
         "LLM Content Signals":"LLM Content",
@@ -1164,116 +1170,169 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
 
     class SummitPDF(FPDF):
         def header(self):
-            self.image(logo_tmp,12,8,22)
+            self.image(logo_tmp, 12, 8, 22)
             self.set_font("Helvetica","B",15); self.set_text_color(*S_CHARCOAL_RGB)
             self.set_xy(38,10); self.cell(0,7,"AI Visibility Audit",ln=False)
             self.set_font("Helvetica","",8.5); self.set_text_color(130,130,140)
-            self.set_xy(38,18); self.cell(0,5,_pdf_safe(f"{url}  -  {datetime.now().strftime('%B %Y')}", 120),ln=True)
+            self.set_xy(38,18)
+            self.cell(0,5,_pdf_safe(f"{url}  -  {datetime.now().strftime('%B %Y')}",120),ln=True)
             self.set_draw_color(*S_RED_RGB); self.set_line_width(0.9)
             self.line(12,27,198,27); self.ln(3)
         def footer(self):
             self.set_y(-11); self.set_font("Helvetica","I",7.5)
             self.set_text_color(160,160,170)
-            self.cell(0,5,f"Summit AI Visibility Audit  ·  Confidential  ·  Page {self.page_no()}",align="C")
+            self.cell(0,5,f"Summit AI Visibility Audit  -  Confidential  -  Page {self.page_no()}",align="C")
 
-    pdf=SummitPDF(); pdf.add_page(); pdf.set_auto_page_break(auto=True,margin=13)
+    pdf = SummitPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=14)
 
-    # Hero
-    y0=pdf.get_y()
-    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.rect(12,y0,52,32,"F")
-    pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",30)
-    pdf.set_xy(12,y0+3); pdf.cell(52,14,f"{overall}/10",align="C",ln=False)
+    # ── PAGE 1: Hero + Score tiles + Bar chart ────────────────────────────
+    # Hero row
+    y0 = pdf.get_y()
+    pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.rect(12,y0,52,30,"F")
+    pdf.set_text_color(255,255,255); pdf.set_font("Helvetica","B",28)
+    pdf.set_xy(12,y0+2); pdf.cell(52,13,f"{overall}/10",align="C",ln=False)
     pdf.set_font("Helvetica","",7.5); pdf.set_text_color(180,180,200)
-    pdf.set_xy(12,y0+19); pdf.cell(52,7,"Overall AI Visibility Score",align="C",ln=False)
-    pdf.set_fill_color(*bg_rgb[band]); pdf.rect(66,y0,52,32,"F")
-    pdf.set_text_color(*fg_rgb2[band]); pdf.set_font("Helvetica","B",13)
-    pdf.set_xy(66,y0+7); pdf.cell(52,10,lm[band],align="C",ln=False)
-    pdf.set_font("Helvetica","",7.5); pdf.set_xy(66,y0+19)
-    pdf.cell(52,7,f"Weighted · {len(scores)} dimensions",align="C",ln=False)
-    n_crit=sum(1 for s in scores.values() if score_band(s)=="red")
-    n_good=sum(1 for s in scores.values() if score_band(s)=="green")
-    for i,(val,lbl,col) in enumerate([(n_crit,"Critical",FG_RED_RGB),(n_good,"Passing",FG_GREEN_RGB)]):
-        bx=121+i*40
-        pdf.set_fill_color(248,248,250); pdf.rect(bx,y0,36,32,"F")
-        pdf.set_text_color(*col); pdf.set_font("Helvetica","B",20)
-        pdf.set_xy(bx,y0+4); pdf.cell(36,12,str(val),align="C",ln=False)
-        pdf.set_font("Helvetica","",7); pdf.set_text_color(130,130,140)
-        pdf.set_xy(bx,y0+19); pdf.cell(36,6,lbl,align="C",ln=False)
-    pdf.ln(y0+38-pdf.get_y())
+    pdf.set_xy(12,y0+17); pdf.cell(52,7,"Overall AI Visibility Score",align="C",ln=False)
+
+    pdf.set_fill_color(*bg_rgb[band]); pdf.rect(66,y0,48,30,"F")
+    pdf.set_text_color(*fg_rgb2[band]); pdf.set_font("Helvetica","B",14)
+    pdf.set_xy(66,y0+6); pdf.cell(48,9,lm[band],align="C",ln=False)
+    pdf.set_font("Helvetica","",7.5)
+    pdf.set_xy(66,y0+18); pdf.cell(48,6,f"Weighted across {len(scores)} dimensions",align="C",ln=False)
+
+    n_crit = sum(1 for s in scores.values() if score_band(s)=="red")
+    n_warn = sum(1 for s in scores.values() if score_band(s)=="amber")
+    n_good = sum(1 for s in scores.values() if score_band(s)=="green")
+    for i,(val,lbl,col,bg) in enumerate([
+        (n_crit,"Critical",FG_RED_RGB,(253,233,229)),
+        (n_warn,"Warnings",FG_AMBER_RGB,(255,244,224)),
+        (n_good,"Passing",FG_GREEN_RGB,(230,245,236)),
+    ]):
+        bx = 117+i*29
+        pdf.set_fill_color(*bg); pdf.rect(bx,y0,26,30,"F")
+        pdf.set_text_color(*col); pdf.set_font("Helvetica","B",16)
+        pdf.set_xy(bx,y0+4); pdf.cell(26,10,str(val),align="C",ln=False)
+        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(100,100,110)
+        pdf.set_xy(bx,y0+18); pdf.cell(26,5,lbl,align="C",ln=False)
+    pdf.ln(y0+36-pdf.get_y())
     pdf.ln(3)
 
-    # Score tiles
-    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,6,"Dimension Scores",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    # ── Score tiles ──
+    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,5,"Dimension Scores",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
     pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
-    tile_w=37; tile_h=17; gap=0.6
-    for i,(dim,s) in enumerate(sorted(scores.items(),key=lambda x:x[1])):
+
+    tile_w=37; tile_h=16; gap=0.5
+    sorted_scores = sorted(scores.items(), key=lambda x:x[1])
+    for i,(dim,s) in enumerate(sorted_scores):
         bd=score_band(s); col_i=i%5
         if col_i==0 and i>0: pdf.ln(tile_h+gap)
         y=pdf.get_y(); x=12+col_i*(tile_w+gap)
         pdf.set_fill_color(*bg_rgb[bd]); pdf.rect(x,y,tile_w,tile_h,"F")
-        pdf.set_text_color(*fg_rgb2[bd]); pdf.set_font("Helvetica","B",14)
-        pdf.set_xy(x,y+1); pdf.cell(tile_w,7,f"{s}/10",align="C",ln=False)
+        pdf.set_text_color(*fg_rgb2[bd]); pdf.set_font("Helvetica","B",13)
+        pdf.set_xy(x,y+1); pdf.cell(tile_w,6,f"{s}/10",align="C",ln=False)
         short=dim_short.get(dim,dim[:12])
-        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(80,80,90)
+        pdf.set_font("Helvetica","",6); pdf.set_text_color(70,70,80)
         pdf.set_xy(x,y+9); pdf.cell(tile_w,4,short,align="C",ln=False)
     pdf.ln(tile_h+5)
 
-    # Exec summary
-    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,6,"Executive Summary",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    # ── Horizontal bar chart (drawn with fpdf rects) ──
+    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,5,"Score by Dimension",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
     pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
-    paras=[p.strip() for p in exec_summary.split("\n\n") if p.strip()][:3]
-    pdf.set_font("Helvetica","",8.5); pdf.set_text_color(40,40,50)
-    for para in paras:
-        pdf.multi_cell(0,4.8,_pdf_safe(para, 800)); pdf.ln(1.5)
-    pdf.ln(2)
 
-    # Priority actions table
-    pdf.set_font("Helvetica","B",9); pdf.set_text_color(*S_CHARCOAL_RGB)
-    pdf.cell(0,6,"Priority Actions",ln=True)
-    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.6)
+    bar_area_w=140; bar_label_w=40; bar_h=5.5; bar_gap=1.5
+    max_score=10
+    # Draw axis ticks
+    for tick in [0,2,4,6,8,10]:
+        tx=12+bar_label_w+(tick/max_score)*bar_area_w
+        pdf.set_draw_color(220,220,225); pdf.set_line_width(0.2)
+        # tick line drawn per row below
+    for dim,s in sorted_scores:
+        y_bar=pdf.get_y()
+        short=dim_short.get(dim,dim[:16])
+        pdf.set_font("Helvetica","",6.5); pdf.set_text_color(60,60,70)
+        pdf.set_xy(12,y_bar); pdf.cell(bar_label_w,bar_h,short,align="R",ln=False)
+        # bg track
+        bx=12+bar_label_w+1
+        pdf.set_fill_color(240,240,242); pdf.rect(bx,y_bar+0.5,bar_area_w,bar_h-1,"F")
+        # coloured bar
+        bd=score_band(s); bar_len=(s/max_score)*bar_area_w
+        pdf.set_fill_color(*fg_rgb2[bd]); pdf.rect(bx,y_bar+0.5,bar_len,bar_h-1,"F")
+        # score label
+        pdf.set_font("Helvetica","B",6.5); pdf.set_text_color(*fg_rgb2[bd])
+        pdf.set_xy(bx+bar_len+1,y_bar); pdf.cell(12,bar_h,f"{s}/10",ln=False)
+        pdf.ln(bar_h+bar_gap)
+    pdf.ln(3)
+
+    # ── PAGE 2: Issues list + Executive Summary ──────────────────────────
+    pdf.add_page()
+
+    # Issues table
+    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,5,"Issues & Recommendations",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
     pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+
     pdf.set_fill_color(*S_CHARCOAL_RGB); pdf.set_text_color(255,255,255)
-    pdf.set_font("Helvetica","B",7.5)
-    pdf.cell(5,5.5,"",fill=True,border=0)
-    pdf.cell(20,5.5,"Severity",fill=True,border=0)
-    pdf.cell(38,5.5,"Dimension",fill=True,border=0)
-    pdf.cell(135,5.5,"Recommendation",fill=True,border=0); pdf.ln()
+    pdf.set_font("Helvetica","B",7)
+    pdf.cell(5,5,"",fill=True,border=0)
+    pdf.cell(18,5,"Severity",fill=True,border=0)
+    pdf.cell(32,5,"Dimension",fill=True,border=0)
+    pdf.cell(143,5,"Recommendation",fill=True,border=0); pdf.ln()
+
     all_recs=[]
     for d,res in all_results.items():
         w=DIMENSION_CONFIG.get(d,{}).get("weight",0.05)
         for iss in res.get("issues",[]):
             sev=iss.get("severity","info")
-            all_recs.append({"pri":{"critical":1,"warning":2,"info":3}.get(sev,3),"w":w,
-                             "d":d,"rec":iss.get("recommendation",""),"sev":sev})
+            all_recs.append({
+                "pri":{"critical":1,"warning":2,"info":3}.get(sev,3),
+                "w":w,"d":d,
+                "rec":iss.get("recommendation",""),
+                "sev":sev
+            })
     all_recs.sort(key=lambda x:(x["pri"],-x["w"]))
-    sev_col={"critical":FG_RED_RGB,"warning":FG_AMBER_RGB,"info":(21,80,175)}
-    sev_bg_rgb={"critical":(253,233,229),"warning":(255,244,224),"info":(235,240,251)}
-    for rank,rec in enumerate(all_recs[:12],1):
-        sev=rec["sev"]
-        fill=(252,252,254) if rank%2==0 else (248,248,250)
-        pdf.set_fill_color(*fill); pdf.set_text_color(80,80,90)
-        pdf.set_font("Helvetica","B",7.5)
-        pdf.cell(5,5.5,str(rank),fill=True,border=0,align="C")
-        pdf.set_fill_color(*sev_bg_rgb.get(sev,fill))
-        pdf.set_text_color(*sev_col.get(sev,(80,80,80)))
-        pdf.cell(20,5.5,f"  {sev.upper()}",fill=True,border=0)
-        pdf.set_fill_color(*fill); pdf.set_text_color(60,60,70)
-        pdf.set_font("Helvetica","",7.5)
-        pdf.cell(38,5.5,f"  {dim_short.get(rec['d'],rec['d'][:14])}",fill=True,border=0)
-        rec_txt=_pdf_safe(rec["rec"], 110)
-        pdf.cell(135,5.5,f"  {rec_txt}",fill=True,border=0); pdf.ln()
 
-    raw=pdf.output()
+    sev_col_map = {"critical":FG_RED_RGB,"warning":FG_AMBER_RGB,"info":(21,80,175)}
+    sev_bg_map  = {"critical":(253,233,229),"warning":(255,244,224),"info":(235,240,251)}
+
+    for rank,rec in enumerate(all_recs[:18],1):
+        sev=rec["sev"]
+        fill=(250,250,252) if rank%2==0 else (245,245,248)
+        pdf.set_fill_color(*fill); pdf.set_text_color(70,70,80)
+        pdf.set_font("Helvetica","B",7)
+        pdf.cell(5,5,str(rank),fill=True,border=0,align="C")
+        pdf.set_fill_color(*sev_bg_map.get(sev,fill))
+        pdf.set_text_color(*sev_col_map.get(sev,(80,80,80)))
+        pdf.cell(18,5,f" {sev.upper()}",fill=True,border=0)
+        pdf.set_fill_color(*fill); pdf.set_text_color(60,60,70)
+        pdf.set_font("Helvetica","",7)
+        pdf.cell(32,5,f" {dim_short.get(rec['d'],rec['d'][:14])}",fill=True,border=0)
+        rec_txt=_pdf_safe(rec["rec"],160)
+        pdf.cell(143,5,f" {rec_txt}",fill=True,border=0); pdf.ln()
+
+    pdf.ln(5)
+
+    # Executive Summary
+    pdf.set_font("Helvetica","B",8.5); pdf.set_text_color(*S_CHARCOAL_RGB)
+    pdf.cell(0,5,"Executive Summary",ln=True)
+    pdf.set_draw_color(*S_RED_RGB); pdf.set_line_width(0.5)
+    pdf.line(12,pdf.get_y(),198,pdf.get_y()); pdf.ln(2)
+    paras=[p.strip() for p in exec_summary.split("\n\n") if p.strip()][:4]
+    pdf.set_font("Helvetica","",8.5); pdf.set_text_color(40,40,50)
+    for para in paras:
+        pdf.multi_cell(0,4.8,_pdf_safe(para,1000)); pdf.ln(1.5)
+
+    raw = pdf.output()
     return bytes(raw) if not isinstance(raw, bytes) else raw
 
 
-# =============================================================================
-# AUDIT RUNNER — returns (scores, all_results, exec_summary, page_data)
-# =============================================================================
+
 def run_single_audit(client, url, progress_bar=None, status_box=None, manual_html=None):
     def prog(v):
         if progress_bar is not None:
@@ -1512,7 +1571,6 @@ def main():
         api_key=""
         try:
             api_key=st.secrets["GEMINI_API_KEY"]
-            st.success("✅ API key loaded from secrets")
         except Exception:
             api_key=st.text_input("Gemini API Key",type="password",
                                   help="Or add GEMINI_API_KEY to .streamlit/secrets.toml")
@@ -1535,7 +1593,8 @@ def main():
 
         # Manual HTML paste — for sites that block automated fetching
         with st.expander("📋 Paste HTML manually (optional)"):
-            st.caption("If a site blocks the audit tool, paste its HTML source here (right-click → View Page Source in your browser). This bypasses all bot protection.")
+            st.caption("If the site blocks automated fetching, paste its raw HTML here. Right-click the page in your browser → View Page Source → Select All → paste here.")
+            st.caption("Single URL: applies to that URL. Multiple URLs: applies to the first URL only. Other URLs are fetched automatically.")
             st.text_area("Paste raw HTML", height=120, placeholder="<!DOCTYPE html>...", key="pasted_html_input")
 
         st.markdown("---")
@@ -1582,7 +1641,8 @@ def main():
             st.markdown(f"#### Auditing `{url}`")
             prog=st.progress(0); stat=st.empty()
 
-            manual_html = st.session_state.get("pasted_html_input","").strip()
+            is_first_url = (url_raw == urls_to_audit[0])
+            manual_html = st.session_state.get("pasted_html_input","").strip() if is_first_url else ""
             scores,all_results,exec_summary,page_data = run_single_audit(
                 client, url,
                 progress_bar=prog,
