@@ -326,7 +326,23 @@ def _extract_signals(url: str, html: str) -> dict:
         m = re.search(r"<head[^>]*>(.*?)</head>", html, re.DOTALL | re.IGNORECASE)
         r["head_html"] = m.group(0)[:8000] if m else html[:3000]
 
-    # 3. __NEXT_DATA__ / embedded JS data stores (Wickes, many commerce sites)
+    # 3. Pre-extract meta signals explicitly (mirrors original tool approach)
+    meta_lines = []
+    title_tag = soup.find("title")
+    if title_tag:
+        meta_lines.append(f"title: {title_tag.get_text().strip()[:120]}")
+    for m in soup.find_all("meta"):
+        name = m.get("name","") or m.get("property","") or m.get("http-equiv","")
+        val  = m.get("content","")
+        if name and val:
+            meta_lines.append(f"{name}: {val[:120]}")
+    for lnk in soup.find_all("link", rel=True):
+        rel = " ".join(lnk.get("rel",[])) if isinstance(lnk.get("rel"), list) else lnk.get("rel","")
+        if any(x in rel.lower() for x in ["canonical","alternate","hreflang"]):
+            meta_lines.append(f"<link rel=\"{rel}\" href=\"{lnk.get('href','')[:100]}\">")
+    r["meta_summary"] = "\n".join(meta_lines) if meta_lines else "NO META TAGS FOUND IN STATIC HTML"
+
+    # 4. __NEXT_DATA__ / embedded JS data stores (Wickes, many commerce sites)
     next_tag = soup.find("script", id="__NEXT_DATA__")
     if next_tag and next_tag.string:
         try:
@@ -387,7 +403,7 @@ def fetch_page(url):
         # signal fields populated by _extract_signals
         "html": "", "html_raw_length": 0, "json_ld": [], "head_html": "",
         "headings": [], "aria_html": "", "images_sample": "", "links_sample": "",
-        "next_data": "", "text": "", "text_length": 0, "text_to_html_ratio": 0,
+        "next_data": "", "meta_summary": "", "text": "", "text_length": 0, "text_to_html_ratio": 0,
     }
     html = ""
     try:
@@ -516,25 +532,25 @@ Evaluate:
 
 "Meta & SEO Signals": f"""Analyse the meta tags and SEO signals on this webpage.
 
-IMPORTANT: This tool fetches server-rendered HTML. If the head section below is empty or minimal,
-it means the site uses client-side rendering (JavaScript) to inject meta tags — this is itself
-a critical issue for AI/search crawlers that cannot execute JavaScript.
+IMPORTANT: Content was fetched via: {page_data.get("fetch_source","direct")}.
+If fetch_source is "wayback" this is a cached version reflecting what crawlers see.
+If head_html is empty, the site injects meta tags via JavaScript — a critical AI/SEO issue.
 
-Full <head> HTML ({len(head_html)} chars):
-{head_html if head_html.strip() else "HEAD IS EMPTY — page likely uses client-side rendering. Meta tags injected by JavaScript are invisible to AI crawlers."}
+Pre-extracted meta signals (title, meta tags, canonical, OG, Twitter — all found in static HTML):
+{page_data.get("meta_summary","") or "NO META TAGS FOUND IN STATIC HTML — likely CSR page"}
 
-Also check this raw HTML snippet for any meta tags in the document:
-{page_data.get("html","")[:2000]}
+Full <head> HTML for reference ({len(head_html)} chars):
+{head_html[:3000] if head_html.strip() else "EMPTY — no static head content found"}
 
-Evaluate:
+Evaluate based on the pre-extracted signals above:
 - Title tag: present? length (50-60 chars ideal)? descriptive?
 - Meta description: present? length (150-160 chars ideal)?
-- Canonical tag: present and correct?
+- Canonical tag: present and pointing to correct URL?
 - Open Graph tags (og:title, og:description, og:image): present?
 - Twitter Card tags: present?
 - Meta robots tag: present and configured correctly?
-- Any hreflang or other signals
-- If head is empty/minimal: flag CSR meta injection as critical issue
+- Viewport meta tag
+- If NO meta tags found: this is a critical CSR issue — all meta is JS-injected and invisible to AI crawlers
 
 {BASE}{{"score":<1-10>,"summary":"<2 sentences>","title_length":<int>,"meta_desc_present":true,"canonical_present":true,"og_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
 
@@ -635,21 +651,18 @@ Evaluate:
 
 "Duplicate Content & Tags": f"""Analyse duplicate content and canonical tag issues on this webpage.
 
-<head> HTML ({len(head_html)} chars):
-{head_html if head_html.strip() else "HEAD IS EMPTY — CSR page, meta tags not in static HTML"}
-
-Raw HTML snippet (first 2000 chars, check for canonical/title here if head empty):
-{page_data.get("html","")[:2000]}
+Pre-extracted meta signals:
+{page_data.get("meta_summary","") or "NO META TAGS IN STATIC HTML"}
 
 Text-to-HTML ratio: {page_data.get("text_to_html_ratio",0):.3f}
 Page text sample: {text[:1500]}
 
 Evaluate:
-- Canonical tag: present and self-referencing correctly? (check both head_html AND raw snippet)
+- Canonical tag: present and self-referencing correctly?
 - Title tag: unique or likely a CMS default/template?
 - Meta description: unique or templated?
 - Thin content signals (low text-to-HTML ratio, boilerplate heavy)
-- If head is empty: this is a critical duplicate/canonical risk as crawlers see no canonical signal
+- If no canonical found: flag as critical issue
 
 {BASE}{{"score":<1-10>,"summary":"<2 sentences>","canonical_present":true,"findings":[],"issues":[{{"severity":"critical|warning|info","issue":"<str>","recommendation":"<str>"}}],"positive":[]}}""",
     }
@@ -1261,7 +1274,7 @@ def build_pdf_with_issues(url, scores, all_results, exec_summary, logo_bytes):
 # =============================================================================
 # AUDIT RUNNER — returns (scores, all_results, exec_summary, page_data)
 # =============================================================================
-def run_single_audit(client, url, progress_bar=None, status_box=None):
+def run_single_audit(client, url, progress_bar=None, status_box=None, manual_html=None):
     def prog(v):
         if progress_bar is not None:
             progress_bar.progress(v)
@@ -1270,7 +1283,15 @@ def run_single_audit(client, url, progress_bar=None, status_box=None):
             status_box.text(t)
 
     stat("📡 Fetching page…"); prog(5)
-    page_data = fetch_page(url)
+    if manual_html:
+        # Use manually pasted HTML — bypasses all bot protection
+        page_data = {"url":url,"status_code":200,"error":None,"load_time":None,
+                     "is_https":url.startswith("https://"),"redirect_chain":[],
+                     "fetch_source":"manual_paste","is_js_shell":False}
+        page_data.update(_extract_signals(url, manual_html))
+        stat("📋 Using manually pasted HTML…"); prog(8)
+    else:
+        page_data = fetch_page(url)
     if page_data.get("error"):
         return None, None, None, page_data
 
@@ -1512,6 +1533,11 @@ def main():
             if len(urls_to_audit)>0:
                 st.caption(f"{len(urls_to_audit)} URL{'s' if len(urls_to_audit)!=1 else ''} queued")
 
+        # Manual HTML paste — for sites that block automated fetching
+        with st.expander("📋 Paste HTML manually (optional)"):
+            st.caption("If a site blocks the audit tool, paste its HTML source here (right-click → View Page Source in your browser). This bypasses all bot protection.")
+            st.text_area("Paste raw HTML", height=120, placeholder="<!DOCTYPE html>...", key="pasted_html_input")
+
         st.markdown("---")
         run_btn=st.button("🚀 Run Audit", use_container_width=True)
         if st.button("🗑️ Clear Results", use_container_width=True):
@@ -1556,10 +1582,12 @@ def main():
             st.markdown(f"#### Auditing `{url}`")
             prog=st.progress(0); stat=st.empty()
 
+            manual_html = st.session_state.get("pasted_html_input","").strip()
             scores,all_results,exec_summary,page_data = run_single_audit(
                 client, url,
                 progress_bar=prog,
-                status_box=stat
+                status_box=stat,
+                manual_html=manual_html if manual_html else None,
             )
             prog.empty(); stat.empty()
 
